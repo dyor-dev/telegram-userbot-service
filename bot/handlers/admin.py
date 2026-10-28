@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 def is_admin(user_id: int) -> bool:
-    """Foydalanuvchi admin ekanligini tekshirish."""
     return user_id in settings.ADMIN_IDS
 
 @router.message(Command("vip"))
@@ -23,14 +22,14 @@ async def cmd_give_vip(message: Message, bot: Bot):
     """
     Foydalanuvchiga VIP berish buyrug'i:
     Foydalanish: /vip <user_id> <kunlar_soni>
-    Masalan: /vip 123456789 7
+    Masalan: /vip 123456789 15
     """
     if not is_admin(message.from_user.id):
         return
 
     args = message.text.split()
     if len(args) < 3:
-        await message.answer("⚠️ <b>Foydalanish:</b> <code>/vip &lt;user_id&gt; &lt;kunlar&gt;</code>\nMasalan: <code>/vip 123456789 7</code>", parse_mode="HTML")
+        await message.answer("⚠️ <b>Foydalanish:</b> <code>/vip &lt;user_id&gt; &lt;kunlar&gt;</code>\nMasalan: <code>/vip 123456789 15</code>", parse_mode="HTML")
         return
 
     try:
@@ -43,16 +42,29 @@ async def cmd_give_vip(message: Message, bot: Bot):
     now = datetime.utcnow()
     expires = now + timedelta(days=days)
 
+    # Kuniga qarab VIP tarif turini belgilash
+    if days == 1:
+        target_plan = PlanType.VIP_1
+        plan_title = "1 kunlik VIP"
+    elif days == 7:
+        target_plan = PlanType.VIP_7
+        plan_title = "7 kunlik VIP"
+    elif days == 15:
+        target_plan = PlanType.VIP_15
+        plan_title = "15 kunlik VIP"
+    else:
+        target_plan = PlanType.CUSTOM
+        plan_title = f"{days} kunlik VIP"
+
     async with async_session() as session:
-        # Foydalanuvchini topish
         stmt = select(User).where(User.id == target_id)
         user = (await session.execute(stmt)).scalar_one_or_none()
 
         if not user:
-            await message.answer(f"❌ <code>{target_id}</code> ID li foydalanuvchi avval botga kirmagan (bazada topilmadi).")
+            await message.answer(f"❌ <code>{target_id}</code> ID li foydalanuvchi botda ro'yxatdan o'tmagan.")
             return
 
-        # Faol obunasi bo'lsa, muddatini uzaytirish, bo'lmasa yangi yaratish
+        # Faol obunani tekshirish
         sub_stmt = select(Subscription).where(
             Subscription.user_id == target_id,
             Subscription.status == SubscriptionStatus.ACTIVE,
@@ -61,20 +73,21 @@ async def cmd_give_vip(message: Message, bot: Bot):
         active_sub = (await session.execute(sub_stmt)).scalar_one_or_none()
 
         if active_sub:
+            # TRIAL bo'lsa ham uning tarifini VIP ga yangilaymiz!
+            active_sub.plan = target_plan
             active_sub.expires_at = active_sub.expires_at + timedelta(days=days)
             expires = active_sub.expires_at
         else:
-            plan = PlanType.VIP_1 if days == 1 else (PlanType.VIP_7 if days == 7 else PlanType.VIP_15)
             new_sub = Subscription(
                 user_id=target_id,
-                plan=plan,
+                plan=target_plan,
                 status=SubscriptionStatus.ACTIVE,
                 starts_at=now,
                 expires_at=expires
             )
             session.add(new_sub)
 
-        # Agar foydalanuvchining ulangan userboti bo'lsa, uni darhol ishga tushirish
+        # Agar sessiya ulangan bo'lsa, userbotni ishga tushirish
         sess_stmt = select(UserbotSession).where(
             UserbotSession.user_id == target_id,
             UserbotSession.is_active == True
@@ -85,24 +98,22 @@ async def cmd_give_vip(message: Message, bot: Bot):
                 decrypted = decrypt_session(ub_sess.encrypted_session)
                 await client_manager.start_user(target_id, decrypted)
             except Exception as e:
-                logger.error(f"Userbotni qayta yoqishda xato: {e}")
+                logger.error(f"Userbotni yoqishda xatolik: {e}")
 
         await session.commit()
 
-    # Adminga xabar
     await message.answer(
-        f"✅ <b>Foydalanuvchi {target_id} ga {days} kunlik VIP berildi!</b>\n"
+        f"✅ <b>Foydalanuvchi {target_id} ga {plan_title} berildi!</b>\n"
         f"📅 <b>Tugash vaqti:</b> <code>{expires.strftime('%Y-%m-%d %H:%M')}</code>",
         parse_mode="HTML"
     )
 
-    # Foydalanuvchiga xushxabar yuborish
     try:
         await bot.send_message(
             chat_id=target_id,
-            text=f"🎉 <b>Tabriklaymiz! Administrator tomonidan sizga {days} kunlik VIP obuna faollashtirildi!</b>\n\n"
+            text=f"🎉 <b>Tabriklaymiz! Sizga {plan_title} obunasi faollashtirildi!</b>\n\n"
                  f"📅 Tugash vaqti: <b>{expires.strftime('%Y-%m-%d %H:%M')}</b>\n"
-                 "Userbotingiz xizmatlaridan to'liq foydalanishingiz mumkin!",
+                 "Userbot xizmatlaridan bemalol foydalanishingiz mumkin!",
             parse_mode="HTML"
         )
     except Exception:
@@ -110,7 +121,6 @@ async def cmd_give_vip(message: Message, bot: Bot):
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
-    """Bot statistikasini ko'rish."""
     if not is_admin(message.from_user.id):
         return
 
