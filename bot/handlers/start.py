@@ -12,7 +12,6 @@ from bot.keyboards.inline import main_menu_kb, subscription_plans_kb
 router = Router()
 
 async def get_or_create_user(session, tg_user):
-    """Foydalanuvchini bazadan olish yoki yangi ochish."""
     stmt = select(User).options(
         selectinload(User.session),
         selectinload(User.subscriptions),
@@ -28,7 +27,6 @@ async def get_or_create_user(session, tg_user):
             username=tg_user.username,
             full_name=tg_user.full_name or "Foydalanuvchi"
         )
-        # Birlamchi sozlamalarni biriktirish
         user_settings = UserbotSettings(user_id=tg_user.id)
         session.add(user)
         session.add(user_settings)
@@ -37,20 +35,34 @@ async def get_or_create_user(session, tg_user):
 
     return user
 
+def format_plan_title(plan: PlanType) -> str:
+    """Tarif nomini chiroyli formatda chiqarish."""
+    if plan == PlanType.VIP_1:
+        return "💎 VIP (1 kunlik)"
+    elif plan == PlanType.VIP_7:
+        return "💎 VIP (7 kunlik)"
+    elif plan == PlanType.VIP_15:
+        return "💎 VIP (15 kunlik)"
+    elif plan == PlanType.CUSTOM:
+        return "💎 VIP Obuna"
+    elif plan == PlanType.TRIAL:
+        return "🎁 Bepul Trial"
+    return "VIP Obuna"
+
 def check_user_status(user: User):
-    """Foydalanuvchining sessiya va obuna holatini aniqlash."""
     has_session = bool(user.session and user.session.is_active)
     is_vip = False
     sub_info = "Obuna yo'q"
 
-    # Faol obunani tekshirish
     now = datetime.utcnow()
     for sub in (user.subscriptions or []):
         if sub.status == SubscriptionStatus.ACTIVE and sub.expires_at > now:
             is_vip = True
-            qolgan_kun = (sub.expires_at - now).days
-            qolgan_soat = ((sub.expires_at - now).seconds) // 3600
-            sub_info = f"Faol ({sub.plan.value.upper()}) — {qolgan_kun} kun {qolgan_soat} soat qoldi"
+            delta = sub.expires_at - now
+            qolgan_kun = delta.days
+            qolgan_soat = delta.seconds // 3600
+            plan_name = format_plan_title(sub.plan)
+            sub_info = f"Faol ({plan_name}) — {qolgan_kun} kun {qolgan_soat} soat qoldi"
             break
 
     return has_session, is_vip, sub_info
@@ -89,7 +101,6 @@ async def back_to_main(callback: CallbackQuery):
 
 @router.callback_query(F.data == "claim_trial")
 async def claim_trial_handler(callback: CallbackQuery):
-    """Bepul trial (1 kun) berish mexanizmi."""
     async with async_session() as session:
         user = await get_or_create_user(session, callback.from_user)
 
@@ -97,7 +108,6 @@ async def claim_trial_handler(callback: CallbackQuery):
             await callback.answer("⚠️ Siz avval bepul sinov (Trial) imkoniyatidan foydalangansiz!", show_alert=True)
             return
 
-        # 1 kunlik trial faollashtirish
         now = datetime.utcnow()
         expires = now + timedelta(days=1)
 
@@ -115,8 +125,8 @@ async def claim_trial_handler(callback: CallbackQuery):
         await session.commit()
 
     await callback.message.answer(
-        "🎉 <b>Tabriklaymiz! 1 kunlik bepul VIP sinov muddati faollashtirildi.</b>\n\n"
-        "Endi o'z hisobingizga userbotni ulashingiz mumkin!",
+        "🎉 <b>Tabriklaymiz! 1 kunlik bepul sinov muddati faollashtirildi.</b>\n\n"
+        "Endi «Userbotni ulash» tugmasi orqali hisobingizni ulashingiz mumkin!",
         parse_mode="HTML"
     )
     await back_to_main(callback)
@@ -126,16 +136,17 @@ async def commands_guide_handler(callback: CallbackQuery):
     text = (
         "📖 <b>Userbot Maxsus Buyruqlari Qo'llanmasi:</b>\n\n"
         "Userbotingiz ulangandan so'ng, istalgan chatda quyidagi buyruqlarni yuborishingiz mumkin:\n\n"
-        "🔹 <code>.ping</code> — Botning javob berish tezligi va server kechikishini tekshirish.\n"
-        "🔹 <code>.ok</code> — O'z-o‘zidan yo‘qoladigan (1 martalik ko‘rish uchun yuborilgan) rasm yoki videolarga reply (javob) qilib yozsangiz, bot uni shaxsiy «Saqlangan xabarlar»ingizga o‘chmas qilib saqlab beradi.\n"
+        "🔹 <code>.ping</code> — Botning javob berish tezligi va kechikishini tekshirish.\n"
+        "🔹 <code>.ok</code> — Bir martalik (o‘z-o‘zidan yo‘qoluvchi) rasm yoki videoga reply qilib yozsangiz, uni «Saqlangan xabarlar»ingizga o‘chmas qilib yuklaydi.\n"
+        "🔹 <code>.dw @username</code> — Belgilangan foydalanuvchining barcha faol hikoyalarini (Stories) <b>anonim tarzda</b> yuklab «Saqlangan xabarlar»ingizga tashlab beradi.\n"
         "🔹 <code>.info</code> — Telegram hisobingiz va faol userbot statistikasi.\n\n"
         "<i>Eslatma: Buyruqlar oldida nuqta (.) bo'lishi shart!</i>"
     )
-    await callback.message.edit_text(
-        text,
-        reply_markup=main_menu_kb(True, True),
-        parse_mode="HTML"
-    )
+    async with async_session() as session:
+        user = await get_or_create_user(session, callback.from_user)
+        has_session, is_vip, _ = check_user_status(user)
+
+    await callback.message.edit_text(text, reply_markup=main_menu_kb(has_session, is_vip), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "buy_vip")
@@ -144,10 +155,10 @@ async def buy_vip_handler(callback: CallbackQuery):
         "💎 <b>VIP Obuna Tariflari</b>\n\n"
         "VIP maqomiga ega bo'lish orqali quyidagi imkoniyatlarni qo'lga kiritasiz:\n"
         "• 24/7 uzluksiz userbot ishlashi\n"
-        "• O'z-o'zidan o'chuvchi mediani avto-saqlash\n"
-        "• Guruh va kanallarda avto-komment qoldirish\n"
-        "• Anonim Stories ko'rish va yuklash\n\n"
-        "O'zingizga ma'qul tarifni tanlang (To'lov Telegram Stars orqali amalga oshiriladi):"
+        "• O'z-o'zidan o'chuvchi mediani avto-saqlash (<code>.ok</code>)\n"
+        "• Ochiq hikoyalarni anonim yuklab olish (<code>.dw @username</code>)\n"
+        "• Guruh va kanallarda chaqmoqdek tez avto-komment qoldirish\n\n"
+        "O'zingizga ma'qul tarifni tanlang:"
     )
     await callback.message.edit_text(text, reply_markup=subscription_plans_kb(), parse_mode="HTML")
     await callback.answer()
