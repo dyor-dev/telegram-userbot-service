@@ -5,6 +5,10 @@ from hydrogram import Client, filters
 from hydrogram.types import Message
 from hydrogram.enums import ParseMode
 
+# Hikoyalarni to'g'ri o'qish uchun yuqori darajadagi parserlar
+from hydrogram.types.messages_and_media.message import Message as HighMessage
+from hydrogram.raw.types import Message as RawMessage
+
 logger = logging.getLogger(__name__)
 
 def register_commands(client: Client):
@@ -98,11 +102,10 @@ def register_commands(client: Client):
             msg = await m.edit_text(f"🔍 <b>@{target_username}</b> hikoyalari anonim yuklanmoqda...", parse_mode=ParseMode.HTML)
 
             try:
-                from hydrogram.raw import functions, types
+                from hydrogram.raw import functions
                 peer = await c.resolve_peer(target_username)
                 peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
-                # Telegram MTProto tuzilmasi bo'yicha haqiqiy ro'yxatni ajratib olish:
                 story_items = []
                 if hasattr(peer_stories, "stories"):
                     inner = peer_stories.stories
@@ -112,7 +115,7 @@ def register_commands(client: Client):
                         story_items = inner
 
                 if not story_items:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
                     return
 
                 count = 0
@@ -120,27 +123,44 @@ def register_commands(client: Client):
                     if not hasattr(story, "media") or not story.media:
                         continue
 
-                    file_path = await c.download_media(story.media)
-                    if file_path:
-                        caption = (
-                            f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n\n"
-                            f"👤 <b>Egasi:</b> @{target_username}\n"
-                            f"🆔 <b>Story ID:</b> <code>{getattr(story, 'id', '')}</code>\n"
-                            "<i>(Egasiga siz ko'rganingiz mutlaqo ko'rinmaydi)</i>"
+                    try:
+                        # Xom Stories ni yuqori darajadagi xabarga o'girib, file_id hosil qilish
+                        raw_msg = RawMessage(
+                            id=getattr(story, "id", 1),
+                            date=int(time.time()),
+                            peer_id=peer,
+                            media=story.media
                         )
-                        if isinstance(story.media, types.MessageMediaPhoto):
-                            await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
-                        else:
-                            await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                        parsed_msg = await HighMessage._parse(c, raw_msg, {}, {})
 
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                        count += 1
+                        # Yuqori darajadagi xabarni yuklab olish
+                        file_path = await c.download_media(parsed_msg)
+
+                        if file_path:
+                            caption = (
+                                f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n\n"
+                                f"👤 <b>Egasi:</b> @{target_username}\n"
+                                f"🆔 <b>Story ID:</b> <code>{getattr(story, 'id', '')}</code>\n"
+                                "<i>(Egasiga siz ko'rganingiz mutlaqo ko'rinmaydi)</i>"
+                            )
+
+                            if parsed_msg.photo:
+                                await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                            elif parsed_msg.video:
+                                await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                            else:
+                                await c.send_document("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                            count += 1
+                    except Exception as story_err:
+                        logger.warning(f"Bitta storyni yuklashda xatolik: {story_err}")
 
                 if count > 0:
                     await msg.edit_text(f"✅ <b>@{target_username}</b>ning {count} ta hikoyasi «Saqlangan xabarlar»ingizga tashlandi!", parse_mode=ParseMode.HTML)
                 else:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi.", parse_mode=ParseMode.HTML)
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobidagi hikoyalarni yuklab bo'lmadi (profil yopiq bo'lishi mumkin).", parse_mode=ParseMode.HTML)
 
             except Exception as e:
                 logger.error(f"Story download error: {e}")
