@@ -22,12 +22,15 @@ class SubscriptionStatus(str, PyEnum):
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)  # Telegram ID
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     username: Mapped[str] = mapped_column(String(64), nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     
-    # Bepul Trial tekshiruvi (bitta akkauntga faqat bir marta berish uchun)
+    # Maxfiylik siyosatiga rozilik holati
+    agreed_terms: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Bepul Trial tekshiruvi
     has_used_trial: Mapped[bool] = mapped_column(Boolean, default=False)
     trial_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
@@ -46,8 +49,6 @@ class UserbotSession(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), unique=True)
     phone_number: Mapped[str] = mapped_column(String(32), nullable=True)
-    
-    # Shifrlangan sessiya (security.py orqali shifrlanadi)
     encrypted_session: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     connected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -78,13 +79,11 @@ class UserbotSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), unique=True)
 
-    # Avto-komment sozlamalari
     auto_comment_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     comment_text: Mapped[str] = mapped_column(Text, default="Zo'r post! 👍")
     comment_delay: Mapped[int] = mapped_column(Integer, default=5)
     target_channels: Mapped[dict] = mapped_column(JSON, default=list)
 
-    # Maxsus buyruqlar va xizmatlar
     save_destructing_media: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_stories_view: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -98,7 +97,7 @@ class Payment(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), default="XTR")
+    currency: Mapped[str] = mapped_column(String(10), default="UZS")
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), nullable=False)
     
     telegram_charge_id: Mapped[str] = mapped_column(String(255), nullable=True)
