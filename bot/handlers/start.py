@@ -158,7 +158,7 @@ async def buy_vip_handler(callback: CallbackQuery):
         "• O'z-o'zidan o'chuvchi mediani avto-saqlash (<code>.ok</code>)\n"
         "• Ochiq hikoyalarni anonim yuklab olish (<code>.dw @username</code>)\n"
         "• Guruh va kanallarda chaqmoqdek tez avto-komment qoldirish\n\n"
-        "O'zingizga ma'qul tarifni tanlang:"
+        "O'zingizga ma'qul tarifni tanlang 👇"
     )
     await callback.message.edit_text(text, reply_markup=subscription_plans_kb(), parse_mode="HTML")
     await callback.answer()
