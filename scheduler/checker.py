@@ -11,11 +11,17 @@ from bot.keyboards.inline import subscription_plans_kb
 logger = logging.getLogger(__name__)
 
 async def check_expired_subscriptions(bot: Bot):
-    """Muddati tugagan obunalarni tekshirish va userbotni to'xtatish."""
+    """Muddati tugagan obunalarni va chiqarib yuborilgan seanslarni tekshirish."""
     now = datetime.utcnow()
 
+    # 1. Chiqarib yuborilgan faol seanslarni tekshirish
+    try:
+        await client_manager.verify_active_sessions(bot)
+    except Exception as e:
+        logger.error(f"Seanslarni tekshirishda xatolik: {e}")
+
+    # 2. Obunasi tugaganlarni tekshirish
     async with async_session() as session:
-        # Muddati o'tgan, lekin statusi hali ACTIVE bo'lganlarni qidirish
         stmt = select(Subscription).where(
             Subscription.status == SubscriptionStatus.ACTIVE,
             Subscription.expires_at <= now
@@ -26,11 +32,9 @@ async def check_expired_subscriptions(bot: Bot):
             sub.status = SubscriptionStatus.EXPIRED
             user_id = sub.user_id
 
-            # 1. Userbotni to'xtatish
             await client_manager.stop_user(user_id)
             logger.info(f"⌛ Obuna muddati tugadi: User {user_id}. Userbot to'xtatildi.")
 
-            # 2. Foydalanuvchiga ogohlantirish xabari yuborish
             try:
                 text = (
                     "⚠️ <b>VIP obuna muddatingiz tugadi!</b>\n\n"
@@ -44,7 +48,7 @@ async def check_expired_subscriptions(bot: Bot):
                     parse_mode="HTML"
                 )
             except Exception as e:
-                logger.warning(f"Ogohlantirish xabarini yuborib bo'lmadi ({user_id}): {e}")
+                logger.warning(f"Ogohlantirish yuborishda xato ({user_id}): {e}")
 
         if expired_subs:
             await session.commit()
