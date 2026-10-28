@@ -43,61 +43,63 @@ def register_commands(client: Client):
             await m.edit_text(info_text, parse_mode=ParseMode.HTML)
             return
 
-        # 3. .ok buyrug'i (Bir martalik mediani saqlash)
+        # 3. .ok buyrug'i (Bir martalik mediani IZZSIZ saqlash)
         elif text.lower().startswith(".ok"):
-            if not m.reply_to_message:
-                await m.edit_text("⚠️ <i>Ushbu buyruqni bir martalik rasm yoki videoga javob (reply) qilib yozing!</i>", parse_mode=ParseMode.HTML)
-                return
-
             target = m.reply_to_message
-            has_media = bool(target.photo or target.video or target.voice or target.video_note or target.document)
-
-            if not has_media:
-                await m.edit_text("❌ <i>Javob berilgan xabarda media fayl topilmadi.</i>", parse_mode=ParseMode.HTML)
+            if not target:
+                # Agar reply qilinmagan bo'lsa, xabarni o'chirib tashlaydi
+                await m.delete()
                 return
 
-            msg = await m.edit_text("📥 <i>Media yuklab olinmoqda...</i>", parse_mode=ParseMode.HTML)
+            has_media = bool(target.photo or target.video or target.voice or target.video_note or target.document)
+            if not has_media:
+                await m.delete()
+                return
+
             try:
+                # Mediani yuklab olish
                 file_path = await target.download()
-                if not file_path:
-                    await msg.edit_text("❌ <i>Mediani yuklab bo'lmadi.</i>", parse_mode=ParseMode.HTML)
-                    return
+                if file_path:
+                    caption = (
+                        "🔒 <b>Maxfiy (o'z-o'zidan o'chuvchi) media saqlandi!</b>\n\n"
+                        f"👤 <b>Yuboruvchi:</b> {target.from_user.mention if target.from_user else 'Nomaʼlum'}\n"
+                        f"📅 <b>Vaqt:</b> <code>{target.date.strftime('%Y-%m-%d %H:%M:%S')}</code>"
+                    )
 
-                caption = (
-                    "🔒 <b>Maxfiy (o'z-o'zidan o'chuvchi) media saqlandi!</b>\n\n"
-                    f"👤 <b>Yuboruvchi:</b> {target.from_user.mention if target.from_user else 'Nomaʼlum'}\n"
-                    f"📅 <b>Vaqt:</b> <code>{target.date.strftime('%Y-%m-%d %H:%M:%S')}</code>"
-                )
+                    # Faqat "Saqlangan xabarlar"ga (me) yuboriladi
+                    if target.photo:
+                        await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                    elif target.video:
+                        await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                    elif target.voice:
+                        await c.send_voice("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                    elif target.video_note:
+                        await c.send_video_note("me", file_path)
+                    elif target.document:
+                        await c.send_document("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
 
-                if target.photo:
-                    await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
-                elif target.video:
-                    await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
-                elif target.voice:
-                    await c.send_voice("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
-                elif target.video_note:
-                    await c.send_video_note("me", file_path)
-                elif target.document:
-                    await c.send_document("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
 
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-
-                await msg.edit_text("✅ <b>Media «Saqlangan xabarlar»ingizga saqlandi!</b>", parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"Error downloading media: {e}")
-                await msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}", parse_mode=ParseMode.HTML)
+            finally:
+                # Chatdagi .ok xabarining o'zi IZZSIZ o'chiriladi
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
             return
 
         # 4. .dw @username buyrug'i (Hikoyalar)
         elif text.lower().startswith(".dw"):
             args = text.split()
             if len(args) < 2:
-                await m.edit_text("⚠️ <b>Foydalanish tartibi:</b> <code>.dw @username</code>\nMasalan: <code>.dw @durov</code>", parse_mode=ParseMode.HTML)
+                await m.edit_text("⚠️ <b>Foydalanish:</b> <code>.dw @username</code>", parse_mode=ParseMode.HTML)
                 return
 
             target_username = args[1].replace("@", "").strip()
-            msg = await m.edit_text(f"🔍 <b>@{target_username}</b> hikoyalari anonim qidirilmoqda...", parse_mode=ParseMode.HTML)
+            msg = await m.edit_text(f"🔍 <b>@{target_username}</b> hikoyalari anonim yuklanmoqda...", parse_mode=ParseMode.HTML)
 
             try:
                 from hydrogram.raw import functions, types
@@ -105,7 +107,7 @@ def register_commands(client: Client):
                 peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
                 if not peer_stories or not hasattr(peer_stories, "stories") or not peer_stories.stories:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki profil yopiq.", parse_mode=ParseMode.HTML)
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi yoki profil yopiq.", parse_mode=ParseMode.HTML)
                     return
 
                 count = 0
@@ -130,7 +132,7 @@ def register_commands(client: Client):
                         count += 1
 
                 if count > 0:
-                    await msg.edit_text(f"✅ <b>@{target_username}</b>ning jami <b>{count} ta</b> hikoyasi «Saqlangan xabarlar»ingizga tashlandi!", parse_mode=ParseMode.HTML)
+                    await msg.edit_text(f"✅ <b>@{target_username}</b>ning {count} ta hikoyasi «Saqlangan xabarlar»ingizga tashlandi!", parse_mode=ParseMode.HTML)
                 else:
                     await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi.", parse_mode=ParseMode.HTML)
 
