@@ -1,8 +1,10 @@
 import logging
 from datetime import datetime
 from typing import Dict
+from aiogram import Bot
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from hydrogram import Client
-from hydrogram.errors import AuthKeyUnregistered, UserDeactivated, SessionRevoked
+from hydrogram.errors import AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired
 from sqlalchemy import select
 
 from core.config import settings
@@ -14,11 +16,9 @@ logger = logging.getLogger(__name__)
 
 class ClientManager:
     def __init__(self):
-        # user_id -> Client obyektlarini saqlash
         self.clients: Dict[int, Client] = {}
 
     def _attach_handlers(self, client: Client, user_id: int):
-        """Userbotga ham buyruqlarni (.ping, .ok, .dw), ham chaqmoqdek tez avto-kommentni ulash."""
         try:
             from userbot.handlers.commands import register_commands
             register_commands(client)
@@ -32,7 +32,6 @@ class ClientManager:
             logger.warning(f"Avto-kommentni ulashda xatolik ({user_id}): {e}")
 
     async def start_user(self, user_id: int, session_string: str) -> bool:
-        """Bitta foydalanuvchining userbotini ishga tushirish."""
         if user_id in self.clients:
             await self.stop_user(user_id)
 
@@ -45,15 +44,13 @@ class ClientManager:
                 in_memory=True
             )
 
-            # Buyruqlar va vazifalarni ulash
             self._attach_handlers(client, user_id)
-
             await client.start()
             self.clients[user_id] = client
             logger.info(f"✅ Userbot ishga tushdi: User ID {user_id}")
             return True
 
-        except (AuthKeyUnregistered, UserDeactivated, SessionRevoked) as e:
+        except (AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired) as e:
             logger.warning(f"Akkaunt sessiyasi yaroqsiz: {user_id} - {e}")
             await self.mark_session_inactive(user_id)
             return False
@@ -62,7 +59,6 @@ class ClientManager:
             return False
 
     async def stop_user(self, user_id: int):
-        """Bitta foydalanuvchining userbotini to'xtatish."""
         client = self.clients.pop(user_id, None)
         if client:
             try:
@@ -73,7 +69,6 @@ class ClientManager:
                 logger.error(f"To'xtatishda xatolik ({user_id}): {e}")
 
     async def mark_session_inactive(self, user_id: int):
-        """Yaroqsiz bo'lib qolgan sessiyani bazada nofaol qilish."""
         async with async_session() as session:
             stmt = select(UserbotSession).where(UserbotSession.user_id == user_id)
             user_sess = (await session.execute(stmt)).scalar_one_or_none()
@@ -81,8 +76,45 @@ class ClientManager:
                 user_sess.is_active = False
                 await session.commit()
 
+    async def handle_revoked_session(self, user_id: int, bot: Bot):
+        """Seans chiqarib yuborilganda userbotni to'xtatish va mijozga ogohlantirish yuborish."""
+        await self.stop_user(user_id)
+        await self.mark_session_inactive(user_id)
+
+        try:
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🔌 Userbotni qayta ulash", callback_data="connect_userbot")
+            builder.button(text="⬅️ Bosh menyu", callback_data="back_to_main")
+            builder.adjust(1, 1)
+
+            text = (
+                "⚠️ <b>Diqqat! Userbot faoliyati to'xtatildi!</b>\n\n"
+                "Siz Telegram hisobingizdagi <b>«Qurilmalar» (Faol seanslar)</b> bo'limidan "
+                "userbot sessiyasini chiqarib yubordingiz.\n\n"
+                "🔒 <i>Iltimos, userbotni hisobingizdan chiqarib yubormang! "
+                "Xizmatimiz to'liq shifrlangan va mutlaqo xavfsiz.</i>\n\n"
+                "Userbotni qayta faollashtirish uchun quyidagi tugmani bosing 👇"
+            )
+            await bot.send_message(chat_id=user_id, text=text, reply_markup=builder.as_markup(), parse_mode="HTML")
+            logger.info(f"Seans o'chirilganligi haqida foydalanuvchiga xabar yuborildi: {user_id}")
+        except Exception as e:
+            logger.warning(f"Ogohlantirish yuborishda xatolik ({user_id}): {e}")
+
+    async def verify_active_sessions(self, bot: Bot):
+        """Orqa fonda barcha userbotlar hali ham akkauntda bormi-yo'qligini tekshirish."""
+        for user_id, client in list(self.clients.items()):
+            try:
+                if not client.is_connected:
+                    continue
+                # Telegramga kichik tekshiruv so'rovi
+                await client.get_me()
+            except (AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired):
+                logger.warning(f"Foydalanuvchi seansni o'chirib yuborgan: {user_id}")
+                await self.handle_revoked_session(user_id, bot)
+            except Exception:
+                pass
+
     async def start_all_active_users(self):
-        """Server qayta yoqilganda barcha faol obunasi bor userbotlarni avtomatik ishga tushirish."""
         logger.info("🔄 Faol userbot sessiyalari bazadan tekshirilmoqda...")
         now = datetime.utcnow()
 
@@ -91,7 +123,6 @@ class ClientManager:
             sessions = (await session.execute(stmt)).scalars().all()
 
             for s in sessions:
-                # Faol obunani tekshirish
                 sub_stmt = select(Subscription).where(
                     Subscription.user_id == s.user_id,
                     Subscription.status == SubscriptionStatus.ACTIVE,
@@ -111,7 +142,6 @@ class ClientManager:
         logger.info(f"🚀 Jami {len(self.clients)} ta userbot muvaffaqiyatli ishga tushirildi!")
 
     async def stop_all(self):
-        """Barcha userbotlarni xavfsiz to'xtatish."""
         for user_id in list(self.clients.keys()):
             await self.stop_user(user_id)
 
