@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -16,18 +17,16 @@ from sqlalchemy import select
 from core.config import settings
 from core.database import async_session
 from core.security import encrypt_session
-from database.models import User, UserbotSession, Subscription, SubscriptionStatus
+from database.models import User, UserbotSession, Subscription, SubscriptionStatus, PlanType
 from bot.states.auth import AuthStates
 from bot.keyboards.inline import cancel_kb, main_menu_kb
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Vaqtinchalik xotiradagi mijozlar (Login jarayoni uchun)
 auth_clients: dict[int, Client] = {}
 
 async def cleanup_client(user_id: int):
-    """Vaqtincha ochilgan ulanishni xotiradan tozalash."""
     client = auth_clients.pop(user_id, None)
     if client:
         try:
@@ -40,17 +39,23 @@ async def cleanup_client(user_id: int):
 async def start_auth_process(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
 
-    # Obuna yoki Trial mavjudligini tekshirish
     async with async_session() as session:
-        stmt = select(Subscription).where(
-            Subscription.user_id == user_id,
-            Subscription.status == SubscriptionStatus.ACTIVE
-        )
-        active_sub = (await session.execute(stmt)).scalars().first()
+        # Foydalanuvchini olish
+        stmt = select(User).where(User.id == user_id)
+        user = (await session.execute(stmt)).scalar_one_or_none()
 
-        if not active_sub:
+        # Faol obunasini tekshirish
+        sub_stmt = select(Subscription).where(
+            Subscription.user_id == user_id,
+            Subscription.status == SubscriptionStatus.ACTIVE,
+            Subscription.expires_at > datetime.utcnow()
+        )
+        active_sub = (await session.execute(sub_stmt)).scalars().first()
+
+        # Agar faol VIP bo'lmasa VA trialdan ham avval foydalanib bo'lgan bo'lsa
+        if not active_sub and user and user.has_used_trial:
             await callback.answer(
-                "⚠️ Userbotni ulash uchun avval 'Bepul Trial' oling yoki VIP obunani faollashtiring!",
+                "⚠️ Sizning bepul sinov vaqtingiz tugagan. Davom etish uchun VIP obuna xarid qiling!",
                 show_alert=True
             )
             return
@@ -60,7 +65,7 @@ async def start_auth_process(callback: CallbackQuery, state: FSMContext):
 
     text = (
         "📱 <b>Telegram akkauntingizni ulash</b>\n\n"
-        "Iltimos, Telegram akkauntingiz telefon raqamini xalqaro formatda kiriting:\n"
+        "Iltimos, akkauntingiz telefon raqamini xalqaro formatda kiriting:\n"
         "Masalan: <code>+998901234567</code>"
     )
     await callback.message.edit_text(text, reply_markup=cancel_kb(), parse_mode="HTML")
@@ -174,15 +179,20 @@ async def process_2fa_password(message: Message, state: FSMContext):
         await message.answer(f"❌ Xatolik yuz berdi: {str(e)}", reply_markup=cancel_kb())
 
 async def finish_authorization(message: Message, state: FSMContext, client: Client, phone: str):
-    """Muvaffaqiyatli kirilgach, sessiyani shifrlab saqlash."""
+    """Muvaffaqiyatli ulanganda sessiyani saqlash va 1 kunlik trialni AYNAN SHU LAHZAda yoqish."""
     user_id = message.from_user.id
     try:
         session_str = await client.export_session_string()
         encrypted_session = encrypt_session(session_str)
 
         async with async_session() as session:
-            stmt = select(UserbotSession).where(UserbotSession.user_id == user_id)
-            user_session = (await session.execute(stmt)).scalar_one_or_none()
+            # 1. Foydalanuvchini olish
+            stmt = select(User).where(User.id == user_id)
+            user = (await session.execute(stmt)).scalar_one_or_none()
+
+            # 2. Sessiyani saqlash
+            sess_stmt = select(UserbotSession).where(UserbotSession.user_id == user_id)
+            user_session = (await session.execute(sess_stmt)).scalar_one_or_none()
 
             if user_session:
                 user_session.encrypted_session = encrypted_session
@@ -197,21 +207,48 @@ async def finish_authorization(message: Message, state: FSMContext, client: Clie
                 )
                 session.add(user_session)
 
+            # 3. AQLI TRIAL: Agar faol VIP bo'lmasa va avval ishlatmagan bo'lsa, 24 soat aynan shu soniyadan boshlanadi!
+            sub_stmt = select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.status == SubscriptionStatus.ACTIVE,
+                Subscription.expires_at > datetime.utcnow()
+            )
+            active_sub = (await session.execute(sub_stmt)).scalars().first()
+
+            trial_applied = False
+            if not active_sub and user and not user.has_used_trial:
+                now = datetime.utcnow()
+                expires = now + timedelta(days=1)
+                user.has_used_trial = True
+                user.trial_started_at = now
+
+                trial_sub = Subscription(
+                    user_id=user_id,
+                    plan=PlanType.TRIAL,
+                    status=SubscriptionStatus.ACTIVE,
+                    starts_at=now,
+                    expires_at=expires
+                )
+                session.add(trial_sub)
+                trial_applied = True
+
             await session.commit()
 
         await cleanup_client(user_id)
         await state.clear()
 
-        # Userbotni ishga tushirish (Keyingi bosqichda menejer orqali ulaymiz)
+        # Userbotni darhol ishga tushirish
         try:
             from userbot.client_manager import client_manager
             await client_manager.start_user(user_id, session_str)
         except Exception as err:
             logger.warning(f"ClientManager start warning: {err}")
 
+        extra_msg = "\n\n🎁 <b>Sizga 1 kunlik bepul sinov vaqti aynan hozirdan boshlab berildi!</b>" if trial_applied else ""
+
         await message.answer(
-            "🎉 <b>Tabriklaymiz! Userbot muvaffaqiyatli ulandi va faollashtirildi!</b>\n\n"
-            "Endi siz shaxsiy akkauntingizdan buyruqlarni ishlatishingiz mumkin (Masalan: <code>.ping</code>)",
+            f"🎉 <b>Tabriklaymiz! Userbotingiz muvaffaqiyatli ulandi va ishga tushirildi!</b>{extra_msg}\n\n"
+            "Endi siz shaxsiy hisobingizdan maxsus buyruqlarni (<code>.ping</code>, <code>.ok</code>, <code>.dw @username</code>) ishlatishingiz mumkin!",
             reply_markup=main_menu_kb(has_session=True, is_vip=True),
             parse_mode="HTML"
         )
@@ -224,23 +261,31 @@ async def finish_authorization(message: Message, state: FSMContext, client: Clie
 
 @router.callback_query(F.data == "manage_userbot")
 async def manage_userbot_handler(callback: CallbackQuery):
-    """Userbotni boshqarish va to'xtatish menyusi."""
     user_id = callback.from_user.id
     async with async_session() as session:
         stmt = select(UserbotSession).where(UserbotSession.user_id == user_id)
         user_sess = (await session.execute(stmt)).scalar_one_or_none()
 
-    phone = user_sess.phone_number if user_sess else "Noma'lum"
+    if not user_sess or not user_sess.is_active:
+        await callback.message.edit_text(
+            "⚠️ <b>Userbotingiz ulanmagan!</b>\n\nQuyidagi tugma orqali hisobingizni ulashingiz mumkin:",
+            reply_markup=not_connected_kb(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    phone = user_sess.phone_number or "Noma'lum"
     text = (
         f"⚙️ <b>Userbot Holati</b>\n\n"
         f"• Ulangan raqam: <code>{phone}</code>\n"
-        f"• Holat: 🟢 Faol (Ishlamoqda)\n\n"
+        f"• Holat: 🟢 <b>Faol (24/7 ishlamoqda)</b>\n\n"
         "Userbotni akkauntingizdan uzmoqchi bo'lsangiz, quyidagi tugmani bosing:"
     )
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
     builder.button(text="🛑 Userbotni o'chirish (Uzish)", callback_data="disconnect_userbot")
-    builder.button(text="⬅️ Orqaga", callback_data="back_to_main")
+    builder.button(text="⬅️ Asosiy menyu", callback_data="back_to_main")
     builder.adjust(1, 1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -248,7 +293,6 @@ async def manage_userbot_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data == "disconnect_userbot")
 async def disconnect_userbot_handler(callback: CallbackQuery):
-    """Userbotni to'xtatish va bazadan o'chirish."""
     user_id = callback.from_user.id
     try:
         from userbot.client_manager import client_manager
@@ -264,7 +308,7 @@ async def disconnect_userbot_handler(callback: CallbackQuery):
             await session.commit()
 
     await callback.message.edit_text(
-        "✅ Userbot muvaffaqiyatli to'xtatildi va akkauntingizdan uzildi.",
+        "✅ Userbot to'xtatildi va hisobingizdan uzildi.",
         reply_markup=main_menu_kb(has_session=False, is_vip=False)
     )
     await callback.answer()
