@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from core.database import async_session
 from database.models import User, UserbotSession, Subscription, PlanType, SubscriptionStatus, UserbotSettings
-from bot.keyboards.inline import main_menu_kb, subscription_plans_kb
+from bot.keyboards.inline import main_menu_kb, subscription_plans_kb, feedback_kb
 
 router = Router()
 
@@ -50,7 +50,6 @@ def format_plan_title(plan: PlanType) -> str:
     return "VIP Obuna"
 
 async def render_main_menu(bot_message_or_callback, tg_user, edit: bool = False):
-    """Asosiy menyuni chiqarish funksiyasi."""
     now = datetime.utcnow()
     async with async_session() as session:
         sess_stmt = select(UserbotSession.is_active).where(UserbotSession.user_id == tg_user.id)
@@ -108,18 +107,15 @@ async def cmd_start(message: Message):
         else:
             agreed = user.agreed_terms
 
-    # Agar foydalanuvchi hali shartlarga rozilik bermagan bo'lsa:
     if not agreed:
         await message.answer(PRIVACY_POLICY_TEXT, reply_markup=privacy_policy_kb(), parse_mode="HTML")
         return
 
-    # Agar allaqachon rozilik bergan bo'lsa, to'g'ridan-to'g'ri bosh menyu ochiladi
     await render_main_menu(message, tg_user, edit=False)
 
 @router.callback_query(F.data == "accept_privacy_policy")
 async def accept_policy_handler(callback: CallbackQuery):
     user_id = callback.from_user.id
-
     async with async_session() as session:
         stmt = select(User).where(User.id == user_id)
         user = (await session.execute(stmt)).scalar_one_or_none()
@@ -143,6 +139,20 @@ async def decline_policy_handler(callback: CallbackQuery):
 @router.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: CallbackQuery):
     await render_main_menu(callback, callback.from_user, edit=True)
+    await callback.answer()
+
+# MANA SHU HANDLER ISHLAYDI:
+@router.callback_query(F.data == "feedback_menu")
+async def feedback_menu_handler(callback: CallbackQuery):
+    """Taklif va shikoyatlar menyusi."""
+    text = (
+        "📩 <b>Taklif va shikoyatlar</b>\n\n"
+        "Xizmatimiz sifatini yaxshilash bo'yicha takliflaringiz, savollaringiz yoki biror "
+        "muammo yuzaga kelgan bo'lsa, bevosita bosh dasturchiga murojaat qilishingiz mumkin:\n\n"
+        "👨‍💻 <b>Dasturchi:</b> <b>@zsrov</b>\n\n"
+        "<i>Quyidagi tugma orqali to'g'ridan-to'g'ri bog'lanishingiz mumkin 👇</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=feedback_kb(), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "claim_trial")
@@ -177,7 +187,7 @@ async def commands_guide_handler(callback: CallbackQuery):
         "📖 <b>Userbot Maxsus Buyruqlari Qo'llanmasi:</b>\n\n"
         "Userbotingiz ulangandan so'ng, istalgan chatda quyidagi buyruqlarni yuborishingiz mumkin:\n\n"
         "🔹 <code>.ping</code> — Botning javob berish tezligi va server kechikishini tekshirish.\n"
-        "🔹 <code>.ok</code> — Bir martalik (o‘z-o‘zidan o‘chuvchi) rasm yoki videoga reply qilib yozsangiz, uni «Saqlangan xabarlar»ingizga o‘chmas qilib saqlab beradi.\n"
+        "🔹 <code>.ok</code> — Bir martalik (o‘z-o‘zidan o‘chuvchi) rasm yoki videoga reply qilib yozsangiz, uni chatda hech qanday iz qoldirmasdan «Saqlangan xabarlar»ingizga saqlaydi va buyruqning o‘zini o‘chirib tashlaydi.\n"
         "🔹 <code>.dw @username</code> — Belgilangan foydalanuvchining barcha faol hikoyalarini (Stories) <b>anonim tarzda</b> yuklab «Saqlangan xabarlar»ingizga tashlab beradi.\n"
         "🔹 <code>.info</code> — Telegram hisobingiz va faol userbot statistikasi.\n\n"
         "<i>Eslatma: Buyruqlar oldida nuqta (.) bo'lishi shart!</i>"
@@ -195,7 +205,7 @@ async def buy_vip_handler(callback: CallbackQuery):
         "💎 <b>VIP Obuna Tariflari</b>\n\n"
         "VIP maqomiga ega bo'lish orqali quyidagi imkoniyatlarni qo'lga kiritasiz:\n"
         "• 24/7 uzluksiz userbot ishlashi\n"
-        "• O'z-o'zidan o'chuvchi mediani avto-saqlash (<code>.ok</code>)\n"
+        "• O'z-o'zidan o'chuvchi mediani izsiz avto-saqlash (<code>.ok</code>)\n"
         "• Ochiq hikoyalarni anonim yuklab olish (<code>.dw @username</code>)\n"
         "• Guruh va kanallarda chaqmoqdek tez avto-komment qoldirish\n\n"
         "O'zingizga ma'qul tarifni tanlang 👇"
