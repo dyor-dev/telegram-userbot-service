@@ -47,7 +47,6 @@ def register_commands(client: Client):
         elif text.lower().startswith(".ok"):
             target = m.reply_to_message
             if not target:
-                # Agar reply qilinmagan bo'lsa, xabarni o'chirib tashlaydi
                 await m.delete()
                 return
 
@@ -57,7 +56,6 @@ def register_commands(client: Client):
                 return
 
             try:
-                # Mediani yuklab olish
                 file_path = await target.download()
                 if file_path:
                     caption = (
@@ -66,7 +64,6 @@ def register_commands(client: Client):
                         f"📅 <b>Vaqt:</b> <code>{target.date.strftime('%Y-%m-%d %H:%M:%S')}</code>"
                     )
 
-                    # Faqat "Saqlangan xabarlar"ga (me) yuboriladi
                     if target.photo:
                         await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
                     elif target.video:
@@ -84,18 +81,17 @@ def register_commands(client: Client):
             except Exception as e:
                 logger.error(f"Error downloading media: {e}")
             finally:
-                # Chatdagi .ok xabarining o'zi IZZSIZ o'chiriladi
                 try:
                     await m.delete()
                 except Exception:
                     pass
             return
 
-        # 4. .dw @username buyrug'i (Hikoyalar)
+        # 4. .dw @username buyrug'i (Anonim Hikoyalar)
         elif text.lower().startswith(".dw"):
             args = text.split()
             if len(args) < 2:
-                await m.edit_text("⚠️ <b>Foydalanish:</b> <code>.dw @username</code>", parse_mode=ParseMode.HTML)
+                await m.edit_text("⚠️ <b>Foydalanish:</b> <code>.dw @username</code>\nMasalan: <code>.dw @durov</code>", parse_mode=ParseMode.HTML)
                 return
 
             target_username = args[1].replace("@", "").strip()
@@ -106,13 +102,22 @@ def register_commands(client: Client):
                 peer = await c.resolve_peer(target_username)
                 peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
-                if not peer_stories or not hasattr(peer_stories, "stories") or not peer_stories.stories:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi yoki profil yopiq.", parse_mode=ParseMode.HTML)
+                # Telegram MTProto tuzilmasi bo'yicha haqiqiy ro'yxatni ajratib olish:
+                story_items = []
+                if hasattr(peer_stories, "stories"):
+                    inner = peer_stories.stories
+                    if hasattr(inner, "stories") and isinstance(inner.stories, list):
+                        story_items = inner.stories
+                    elif isinstance(inner, list):
+                        story_items = inner
+
+                if not story_items:
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
                     return
 
                 count = 0
-                for story in peer_stories.stories:
-                    if not isinstance(story, types.StoryItem) or not story.media:
+                for story in story_items:
+                    if not hasattr(story, "media") or not story.media:
                         continue
 
                     file_path = await c.download_media(story.media)
@@ -120,7 +125,8 @@ def register_commands(client: Client):
                         caption = (
                             f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n\n"
                             f"👤 <b>Egasi:</b> @{target_username}\n"
-                            f"🆔 <b>Story ID:</b> <code>{story.id}</code>"
+                            f"🆔 <b>Story ID:</b> <code>{getattr(story, 'id', '')}</code>\n"
+                            "<i>(Egasiga siz ko'rganingiz mutlaqo ko'rinmaydi)</i>"
                         )
                         if isinstance(story.media, types.MessageMediaPhoto):
                             await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
