@@ -3,21 +3,21 @@ import time
 import logging
 from hydrogram import Client, filters
 from hydrogram.types import Message
+from hydrogram.enums import ParseMode
 
 logger = logging.getLogger(__name__)
 
 def register_commands(client: Client):
     """Mijoz akkauntiga maxsus buyruqlarni biriktirish."""
 
-    # 1. Ping tekshirish (.ping)
     @client.on_message((filters.me | filters.outgoing) & filters.text)
     async def handle_userbot_commands(c: Client, m: Message):
         text = (m.text or "").strip()
 
-        # .ping buyrug'i
+        # 1. .ping buyrug'i
         if text.lower() == ".ping":
             start = time.time()
-            msg = await m.edit_text("🏓 <i>Pong...</i>", parse_mode="HTML")
+            msg = await m.edit_text("🏓 <i>Pong...</i>", parse_mode=ParseMode.HTML)
             end = time.time()
             delta_ms = round((end - start) * 1000)
 
@@ -25,11 +25,11 @@ def register_commands(client: Client):
                 f"🏓 <b>Pong!</b>\n"
                 f"⚡ <b>Tezlik:</b> <code>{delta_ms} ms</code>\n"
                 f"🤖 <b>Userbot:</b> 🟢 <i>Faol va chaqqon</i>",
-                parse_mode="HTML"
+                parse_mode=ParseMode.HTML
             )
             return
 
-        # .info buyrug'i
+        # 2. .info buyrug'i
         elif text.lower() == ".info":
             me = await c.get_me()
             info_text = (
@@ -40,27 +40,27 @@ def register_commands(client: Client):
                 f"• Premium: {'⭐ Ha' if me.is_premium else 'Oddiy'}\n"
                 f"• Tizim: <b>SaaS Userbot Service (v1.0)</b>"
             )
-            await m.edit_text(info_text, parse_mode="HTML")
+            await m.edit_text(info_text, parse_mode=ParseMode.HTML)
             return
 
-        # .ok buyrug'i (Bir martalik mediani saqlash)
+        # 3. .ok buyrug'i (Bir martalik mediani saqlash)
         elif text.lower().startswith(".ok"):
             if not m.reply_to_message:
-                await m.edit_text("⚠️ <i>Ushbu buyruqni bir martalik rasm yoki videoga javob (reply) qilib yozing!</i>", parse_mode="HTML")
+                await m.edit_text("⚠️ <i>Ushbu buyruqni bir martalik rasm yoki videoga javob (reply) qilib yozing!</i>", parse_mode=ParseMode.HTML)
                 return
 
             target = m.reply_to_message
             has_media = bool(target.photo or target.video or target.voice or target.video_note or target.document)
 
             if not has_media:
-                await m.edit_text("❌ <i>Javob berilgan xabarda media fayl topilmadi.</i>", parse_mode="HTML")
+                await m.edit_text("❌ <i>Javob berilgan xabarda media fayl topilmadi.</i>", parse_mode=ParseMode.HTML)
                 return
 
-            msg = await m.edit_text("📥 <i>Media yuklab olinmoqda...</i>", parse_mode="HTML")
+            msg = await m.edit_text("📥 <i>Media yuklab olinmoqda...</i>", parse_mode=ParseMode.HTML)
             try:
                 file_path = await target.download()
                 if not file_path:
-                    await msg.edit_text("❌ <i>Mediani yuklab bo'lmadi.</i>", parse_mode="HTML")
+                    await msg.edit_text("❌ <i>Mediani yuklab bo'lmadi.</i>", parse_mode=ParseMode.HTML)
                     return
 
                 caption = (
@@ -70,34 +70,34 @@ def register_commands(client: Client):
                 )
 
                 if target.photo:
-                    await c.send_photo("me", file_path, caption=caption, parse_mode="HTML")
+                    await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
                 elif target.video:
-                    await c.send_video("me", file_path, caption=caption, parse_mode="HTML")
+                    await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
                 elif target.voice:
-                    await c.send_voice("me", file_path, caption=caption, parse_mode="HTML")
+                    await c.send_voice("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
                 elif target.video_note:
                     await c.send_video_note("me", file_path)
                 elif target.document:
-                    await c.send_document("me", file_path, caption=caption, parse_mode="HTML")
+                    await c.send_document("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
 
                 if os.path.exists(file_path):
                     os.remove(file_path)
 
-                await msg.edit_text("✅ <b>Media «Saqlangan xabarlar»ingizga saqlandi!</b>", parse_mode="HTML")
+                await msg.edit_text("✅ <b>Media «Saqlangan xabarlar»ingizga saqlandi!</b>", parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"Error downloading media: {e}")
-                await msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}", parse_mode="HTML")
+                await msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}", parse_mode=ParseMode.HTML)
             return
 
-        # .dw @username buyrug'i (Hikoyalar)
+        # 4. .dw @username buyrug'i (Hikoyalar)
         elif text.lower().startswith(".dw"):
             args = text.split()
             if len(args) < 2:
-                await m.edit_text("⚠️ <b>Foydalanish tartibi:</b> <code>.dw @username</code>\nMasalan: <code>.dw @durov</code>", parse_mode="HTML")
+                await m.edit_text("⚠️ <b>Foydalanish tartibi:</b> <code>.dw @username</code>\nMasalan: <code>.dw @durov</code>", parse_mode=ParseMode.HTML)
                 return
 
             target_username = args[1].replace("@", "").strip()
-            msg = await m.edit_text(f"🔍 <b>@{target_username}</b> hikoyalari anonim qidirilmoqda...", parse_mode="HTML")
+            msg = await m.edit_text(f"🔍 <b>@{target_username}</b> hikoyalari anonim qidirilmoqda...", parse_mode=ParseMode.HTML)
 
             try:
                 from hydrogram.raw import functions, types
@@ -105,7 +105,7 @@ def register_commands(client: Client):
                 peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
                 if not peer_stories or not hasattr(peer_stories, "stories") or not peer_stories.stories:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki profil yopiq.", parse_mode="HTML")
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki profil yopiq.", parse_mode=ParseMode.HTML)
                     return
 
                 count = 0
@@ -121,20 +121,20 @@ def register_commands(client: Client):
                             f"🆔 <b>Story ID:</b> <code>{story.id}</code>"
                         )
                         if isinstance(story.media, types.MessageMediaPhoto):
-                            await c.send_photo("me", file_path, caption=caption, parse_mode="HTML")
+                            await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
                         else:
-                            await c.send_video("me", file_path, caption=caption, parse_mode="HTML")
+                            await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
 
                         if os.path.exists(file_path):
                             os.remove(file_path)
                         count += 1
 
                 if count > 0:
-                    await msg.edit_text(f"✅ <b>@{target_username}</b>ning jami <b>{count} ta</b> hikoyasi «Saqlangan xabarlar»ingizga tashlandi!", parse_mode="HTML")
+                    await msg.edit_text(f"✅ <b>@{target_username}</b>ning jami <b>{count} ta</b> hikoyasi «Saqlangan xabarlar»ingizga tashlandi!", parse_mode=ParseMode.HTML)
                 else:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi.", parse_mode="HTML")
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi.", parse_mode=ParseMode.HTML)
 
             except Exception as e:
                 logger.error(f"Story download error: {e}")
-                await msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}", parse_mode="HTML")
+                await msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}", parse_mode=ParseMode.HTML)
             return
