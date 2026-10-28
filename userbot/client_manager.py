@@ -1,10 +1,12 @@
+import asyncio
 import logging
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 from aiogram import Bot
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from hydrogram import Client
 from hydrogram.errors import AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired
+from hydrogram.raw.functions import Ping
 from sqlalchemy import select
 
 from core.config import settings
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 class ClientManager:
     def __init__(self):
         self.clients: Dict[int, Client] = {}
+        self._keepalive_task: Optional[asyncio.Task] = None
 
     def _attach_handlers(self, client: Client, user_id: int):
         try:
@@ -30,6 +33,29 @@ class ClientManager:
             register_auto_comment(client, user_id)
         except Exception as e:
             logger.warning(f"Avto-kommentni ulashda xatolik ({user_id}): {e}")
+
+    async def _start_keepalive_if_needed(self):
+        """Anti-Sleep (uxlab qolishga qarshi) fon siklini faollashtirish."""
+        if self._keepalive_task is None or self._keepalive_task.done():
+            self._keepalive_task = asyncio.create_task(self._keep_alive_loop())
+            logger.info("🔥 Userbot Keep-Alive (uxlab qolishdan himoya) tizimi ishga tushirildi.")
+
+    async def _keep_alive_loop(self):
+        """Har 30 soniyada barcha ulangan userbotlarni issiq (Hot) holatda ushlab turish."""
+        while True:
+            await asyncio.sleep(30)
+            if not self.clients:
+                continue
+
+            for user_id, client in list(self.clients.items()):
+                try:
+                    if client.is_connected:
+                        # Telegram serveriga 8 baytlik eng yengil keep-alive ping yuborish
+                        await client.invoke(Ping(ping_id=0))
+                except (AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired):
+                    continue
+                except Exception:
+                    pass
 
     async def start_user(self, user_id: int, session_string: str) -> bool:
         if user_id in self.clients:
@@ -48,6 +74,9 @@ class ClientManager:
             await client.start()
             self.clients[user_id] = client
             logger.info(f"✅ Userbot ishga tushdi: User ID {user_id}")
+
+            # Keep-alive siklini yoqish
+            await self._start_keepalive_if_needed()
             return True
 
         except (AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired) as e:
@@ -77,7 +106,6 @@ class ClientManager:
                 await session.commit()
 
     async def handle_revoked_session(self, user_id: int, bot: Bot):
-        """Seans chiqarib yuborilganda userbotni to'xtatish va mijozga ogohlantirish yuborish."""
         await self.stop_user(user_id)
         await self.mark_session_inactive(user_id)
 
@@ -101,12 +129,10 @@ class ClientManager:
             logger.warning(f"Ogohlantirish yuborishda xatolik ({user_id}): {e}")
 
     async def verify_active_sessions(self, bot: Bot):
-        """Orqa fonda barcha userbotlar hali ham akkauntda bormi-yo'qligini tekshirish."""
         for user_id, client in list(self.clients.items()):
             try:
                 if not client.is_connected:
                     continue
-                # Telegramga kichik tekshiruv so'rovi
                 await client.get_me()
             except (AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired):
                 logger.warning(f"Foydalanuvchi seansni o'chirib yuborgan: {user_id}")
@@ -140,8 +166,12 @@ class ClientManager:
                     logger.error(f"Sessiyani tiklashda xatolik ({s.user_id}): {e}")
 
         logger.info(f"🚀 Jami {len(self.clients)} ta userbot muvaffaqiyatli ishga tushirildi!")
+        await self._start_keepalive_if_needed()
 
     async def stop_all(self):
+        if self._keepalive_task and not self._keepalive_task.done():
+            self._keepalive_task.cancel()
+
         for user_id in list(self.clients.keys()):
             await self.stop_user(user_id)
 
