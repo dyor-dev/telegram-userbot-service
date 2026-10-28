@@ -40,11 +40,9 @@ async def start_auth_process(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
 
     async with async_session() as session:
-        # Foydalanuvchini olish
         stmt = select(User).where(User.id == user_id)
         user = (await session.execute(stmt)).scalar_one_or_none()
 
-        # Faol obunasini tekshirish
         sub_stmt = select(Subscription).where(
             Subscription.user_id == user_id,
             Subscription.status == SubscriptionStatus.ACTIVE,
@@ -52,7 +50,6 @@ async def start_auth_process(callback: CallbackQuery, state: FSMContext):
         )
         active_sub = (await session.execute(sub_stmt)).scalars().first()
 
-        # Agar faol VIP bo'lmasa VA trialdan ham avval foydalanib bo'lgan bo'lsa
         if not active_sub and user and user.has_used_trial:
             await callback.answer(
                 "⚠️ Sizning bepul sinov vaqtingiz tugagan. Davom etish uchun VIP obuna xarid qiling!",
@@ -106,13 +103,18 @@ async def process_phone_number(message: Message, state: FSMContext):
         )
         await state.set_state(AuthStates.waiting_for_code)
 
-        await msg.edit_text(
-            f"📩 <b>{phone}</b> raqamiga Telegram orqali 5 xonali tasdiqlash kodi yuborildi.\n\n"
-            "Iltimos, kelgan kodni kiriting:\n"
-            "<i>(Maslahat: Raqamlar orasiga bo'sh joy qoldirib yozsangiz ham bo'ladi, masalan: 1 2 3 4 5)</i>",
-            reply_markup=cancel_kb(),
-            parse_mode="HTML"
+        # Qat'iy xavfsizlik talabi bilan kod so'rash
+        text = (
+            f"📩 <b>{phone}</b> raqamiga Telegram orqali tasdiqlash kodi yuborildi.\n\n"
+            "⚠️ <b>DIQQAT! TELEGRAM BLOKLASHIDAN HIMOYA:</b>\n"
+            "Telegram hisobingiz xavfsizligi va kod bekor bo'lmasligi uchun, kod raqamlari orasiga "
+            "<b>ALBATTA BO'SH JOY (PROBEL) QO'YIB YOZING!</b>\n\n"
+            "To'g'ri shakl: <code>1 2 3 4 5</code>\n\n"
+            "🚫 <i>Raqamlarni biriktirib yozmang, aks holda Telegram so'rovni bloklaydi!</i>"
         )
+
+        await msg.edit_text(text, reply_markup=cancel_kb(), parse_mode="HTML")
+
     except PhoneNumberInvalid:
         await cleanup_client(user_id)
         await msg.edit_text("❌ Telefon raqami noto'g'ri kiritildi. Qaytadan tekshirib yuboring:", reply_markup=cancel_kb())
@@ -128,7 +130,27 @@ async def process_phone_number(message: Message, state: FSMContext):
 @router.message(AuthStates.waiting_for_code)
 async def process_auth_code(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    code = message.text.strip().replace(" ", "")
+    raw_text = message.text.strip()
+
+    # 1. FOYDALANUVCHI PROBEL QO'YGANLIGINI QAT'IY TEKSHIRISH
+    # Agar raqamlarni biriktirib yozgan bo'lsa (probel yo'q bo'lsa), bloklanishdan asrash uchun to'xtatamiz!
+    if " " not in raw_text and "-" not in raw_text and len(raw_text) >= 4:
+        warning_msg = (
+            "⚠️ <b>XATOLIK! PROBEL QO'YISH MAJBURIY!</b>\n\n"
+            "Telegram hisobingiz bloklanib qolmasligi uchun, har bir raqam orasiga <b>bo'sh joy (probel)</b> qoldirib yozishingiz shart!\n\n"
+            "Masalan: <code>1 2 3 4 5</code>\n\n"
+            "Iltimos, kodni probel bilan qaytadan yuboring:"
+        )
+        await message.answer(warning_msg, reply_markup=cancel_kb(), parse_mode="HTML")
+        return
+
+    # Probellarni olib tashlab toza kodni ajratib olish
+    code = raw_text.replace(" ", "").replace("-", "")
+
+    if not code.isdigit():
+        await message.answer("❌ Kod faqat raqamlardan iborat bo'lishi kerak. Masalan: <code>1 2 3 4 5</code>", reply_markup=cancel_kb())
+        return
+
     data = await state.get_data()
     phone = data.get("phone")
     phone_code_hash = data.get("phone_code_hash")
@@ -151,7 +173,7 @@ async def process_auth_code(message: Message, state: FSMContext):
             parse_mode="HTML"
         )
     except (PhoneCodeInvalid, PhoneCodeExpired):
-        await message.answer("❌ Tasdiqlash kodi noto'g'ri yoki muddati o'tgan. Qaytadan kiriting:", reply_markup=cancel_kb())
+        await message.answer("❌ Tasdiqlash kodi noto'g'ri yoki muddati o'tgan. Qaytadan probel bilan kiriting (1 2 3 4 5):", reply_markup=cancel_kb())
     except Exception as e:
         logger.error(f"Sign in error: {e}")
         await message.answer(f"❌ Xatolik yuz berdi: {str(e)}", reply_markup=cancel_kb())
@@ -179,18 +201,15 @@ async def process_2fa_password(message: Message, state: FSMContext):
         await message.answer(f"❌ Xatolik yuz berdi: {str(e)}", reply_markup=cancel_kb())
 
 async def finish_authorization(message: Message, state: FSMContext, client: Client, phone: str):
-    """Muvaffaqiyatli ulanganda sessiyani saqlash va 1 kunlik trialni AYNAN SHU LAHZAda yoqish."""
     user_id = message.from_user.id
     try:
         session_str = await client.export_session_string()
         encrypted_session = encrypt_session(session_str)
 
         async with async_session() as session:
-            # 1. Foydalanuvchini olish
             stmt = select(User).where(User.id == user_id)
             user = (await session.execute(stmt)).scalar_one_or_none()
 
-            # 2. Sessiyani saqlash
             sess_stmt = select(UserbotSession).where(UserbotSession.user_id == user_id)
             user_session = (await session.execute(sess_stmt)).scalar_one_or_none()
 
@@ -207,7 +226,6 @@ async def finish_authorization(message: Message, state: FSMContext, client: Clie
                 )
                 session.add(user_session)
 
-            # 3. AQLI TRIAL: Agar faol VIP bo'lmasa va avval ishlatmagan bo'lsa, 24 soat aynan shu soniyadan boshlanadi!
             sub_stmt = select(Subscription).where(
                 Subscription.user_id == user_id,
                 Subscription.status == SubscriptionStatus.ACTIVE,
@@ -237,7 +255,6 @@ async def finish_authorization(message: Message, state: FSMContext, client: Clie
         await cleanup_client(user_id)
         await state.clear()
 
-        # Userbotni darhol ishga tushirish
         try:
             from userbot.client_manager import client_manager
             await client_manager.start_user(user_id, session_str)
@@ -267,6 +284,7 @@ async def manage_userbot_handler(callback: CallbackQuery):
         user_sess = (await session.execute(stmt)).scalar_one_or_none()
 
     if not user_sess or not user_sess.is_active:
+        from bot.handlers.settings import not_connected_kb
         await callback.message.edit_text(
             "⚠️ <b>Userbotingiz ulanmagan!</b>\n\nQuyidagi tugma orqali hisobingizni ulashingiz mumkin:",
             reply_markup=not_connected_kb(),
