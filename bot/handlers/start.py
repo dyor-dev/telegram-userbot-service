@@ -1,7 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
 from core.database import async_session
@@ -9,6 +10,31 @@ from database.models import User, UserbotSession, Subscription, PlanType, Subscr
 from bot.keyboards.inline import main_menu_kb, subscription_plans_kb
 
 router = Router()
+
+PRIVACY_POLICY_TEXT = (
+    "📄 <b>Foydalanish shartlari va Maxfiylik siyosati</b>\n\n"
+    "🔐 <b>Xush kelibsiz! Xizmatimizdan foydalanishdan oldin quyidagi shartlar bilan tanishib chiqing:</b>\n\n"
+    "<b>1. Ma’lumotlar xavfsizligi va shifrlash:</b>\n"
+    "• Bot foydalanuvchining shaxsiy yozishmalarini o‘qimaydi va begonalarga uzatmaydi.\n"
+    "• Akkauntingizni ulashda hosil bo‘ladigan sessiya ma’lumotlar bazasida <b>AES (Fernet)</b> xalqaro shifrlash standarti orqali kuchli shifrlangan holatda saqlanadi.\n"
+    "• Telefon raqami va tasdiqlash kodlari faqatgina Telegram rasmiy MTProto API orqali akkauntni ulash uchun ishlatiladi.\n\n"
+    "<b>2. Foydalanuvchi javobgarligi:</b>\n"
+    "• Userbot sizning shaxsiy Telegram hisobingiz nomidan buyruqlarni (avto-komment, media saqlash, stories ko‘rish) bajaradi.\n"
+    "• Userbot orqali yoziladigan izohlar (avto-kommentlar matni), qilinadigan harakatlar va Telegram qoidalariga rioya qilish uchun <b>to‘liq javobgarlik foydalanuvchining o‘z zimmasidadir</b>.\n"
+    "• Xizmatdan spam tarqatish, firibgarlik, haqorat yoki qonunga zid maqsadlarda foydalanish qat’iyan taqiqlanadi.\n\n"
+    "<b>3. Bepul Trial va VIP obuna shartlari:</b>\n"
+    "• Bepul sinov muddati (Trial) har bir foydalanuvchiga faqat 1 marta beriladi va uni qayta suiiste’mol qilish taqiqlanadi.\n"
+    "• Obuna muddati tugagach, barcha avtomatik funksiyalar to‘xtatiladi. Foydalanuvchi istalgan vaqtda o‘z userbotini bot orqali uzib tashlash huquqiga ega.\n\n"
+    "<b>4. Rozilik bildirish:</b>\n"
+    "Quyidagi <b>«✅ Roziman va qabul qilaman»</b> tugmasini bosish orqali siz yuqoridagi barcha shartlarga, ma’lumotlaringiz xavfsiz saqlanishiga va xizmatdan faqat o‘z javobgarligingiz ostida foydalanishga to‘liq rozilik bildirasiz."
+)
+
+def privacy_policy_kb():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Roziman va qabul qilaman", callback_data="accept_privacy_policy")
+    builder.button(text="❌ Rad etish", callback_data="decline_privacy_policy")
+    builder.adjust(1, 1)
+    return builder.as_markup()
 
 def format_plan_title(plan: PlanType) -> str:
     if plan == PlanType.VIP_1:
@@ -23,77 +49,15 @@ def format_plan_title(plan: PlanType) -> str:
         return "🎁 Bepul Trial"
     return "VIP Obuna"
 
-@router.message(CommandStart())
-async def cmd_start(message: Message):
-    tg_user = message.from_user
+async def render_main_menu(bot_message_or_callback, tg_user, edit: bool = False):
+    """Asosiy menyuni chiqarish funksiyasi."""
     now = datetime.utcnow()
-
-    # Baza bilan bitta yagona optimallashgan tranzaksiyada ishlash
     async with async_session() as session:
-        # Foydalanuvchini tekshirish
-        user_stmt = select(User).where(User.id == tg_user.id)
-        user = (await session.execute(user_stmt)).scalar_one_or_none()
-
-        if not user:
-            # Yangi foydalanuvchini tezkor saqlash
-            user = User(
-                id=tg_user.id,
-                username=tg_user.username,
-                full_name=tg_user.full_name or "Foydalanuvchi"
-            )
-            session.add(user)
-            session.add(UserbotSettings(user_id=tg_user.id))
-            await session.commit()
-            
-            # Yangi foydalanuvchida hali sessiya va obuna yo'qligi aniq (ortiqcha so'rov shart emas!)
-            has_session = False
-            is_vip = False
-            sub_info = "Obuna yo'q"
-        else:
-            # Mavjud foydalanuvchi uchun sessiya va faol obunani tezkor tekshirish
-            sess_stmt = select(UserbotSession.is_active).where(UserbotSession.user_id == tg_user.id)
-            has_session = bool((await session.execute(sess_stmt)).scalar_one_or_none())
-
-            sub_stmt = select(Subscription).where(
-                Subscription.user_id == tg_user.id,
-                Subscription.status == SubscriptionStatus.ACTIVE,
-                Subscription.expires_at > now
-            ).order_by(Subscription.expires_at.desc())
-            active_sub = (await session.execute(sub_stmt)).scalars().first()
-
-            if active_sub:
-                is_vip = True
-                delta = active_sub.expires_at - now
-                qolgan_kun = delta.days
-                qolgan_soat = delta.seconds // 3600
-                plan_name = format_plan_title(active_sub.plan)
-                sub_info = f"Faol ({plan_name}) — {qolgan_kun} kun {qolgan_soat} soat qoldi"
-            else:
-                is_vip = False
-                sub_info = "Obuna yo'q"
-
-    text = (
-        f"👋 <b>Assalomu alaykum, {tg_user.full_name}!</b>\n\n"
-        f"🤖 <b>Telegram Userbot boshqaruv xizmatiga xush kelibsiz.</b>\n\n"
-        f"📊 <b>Sizning holatingiz:</b>\n"
-        f"• Akkaunt: <code>{tg_user.id}</code>\n"
-        f"• Userbot: {'🟢 Ulangan' if has_session else '🔴 Ulanmagan'}\n"
-        f"• Obuna: <b>{sub_info}</b>\n\n"
-        f"Kerakli bo'limni tanlang 👇"
-    )
-    await message.answer(text, reply_markup=main_menu_kb(has_session, is_vip), parse_mode="HTML")
-
-@router.callback_query(F.data == "back_to_main")
-async def back_to_main(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    now = datetime.utcnow()
-
-    async with async_session() as session:
-        sess_stmt = select(UserbotSession.is_active).where(UserbotSession.user_id == user_id)
+        sess_stmt = select(UserbotSession.is_active).where(UserbotSession.user_id == tg_user.id)
         has_session = bool((await session.execute(sess_stmt)).scalar_one_or_none())
 
         sub_stmt = select(Subscription).where(
-            Subscription.user_id == user_id,
+            Subscription.user_id == tg_user.id,
             Subscription.status == SubscriptionStatus.ACTIVE,
             Subscription.expires_at > now
         ).order_by(Subscription.expires_at.desc())
@@ -108,12 +72,77 @@ async def back_to_main(callback: CallbackQuery):
             sub_info = "Obuna yo'q"
 
     text = (
-        f"🏠 <b>Bosh menyu</b>\n\n"
+        f"👋 <b>Assalomu alaykum, {tg_user.full_name}!</b>\n\n"
+        f"🤖 <b>Telegram Userbot boshqaruv xizmatiga xush kelibsiz.</b>\n\n"
+        f"📊 <b>Sizning holatingiz:</b>\n"
+        f"• Akkaunt: <code>{tg_user.id}</code>\n"
         f"• Userbot: {'🟢 Ulangan' if has_session else '🔴 Ulanmagan'}\n"
         f"• Obuna: <b>{sub_info}</b>\n\n"
-        f"Quyidagi menyulardan birini tanlang:"
+        f"Kerakli bo'limni tanlang 👇"
     )
-    await callback.message.edit_text(text, reply_markup=main_menu_kb(has_session, is_vip), parse_mode="HTML")
+
+    if edit:
+        await bot_message_or_callback.message.edit_text(text, reply_markup=main_menu_kb(has_session, is_vip), parse_mode="HTML")
+    else:
+        await bot_message_or_callback.answer(text, reply_markup=main_menu_kb(has_session, is_vip), parse_mode="HTML")
+
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    tg_user = message.from_user
+
+    async with async_session() as session:
+        user_stmt = select(User).where(User.id == tg_user.id)
+        user = (await session.execute(user_stmt)).scalar_one_or_none()
+
+        if not user:
+            user = User(
+                id=tg_user.id,
+                username=tg_user.username,
+                full_name=tg_user.full_name or "Foydalanuvchi",
+                agreed_terms=False
+            )
+            session.add(user)
+            session.add(UserbotSettings(user_id=tg_user.id))
+            await session.commit()
+            agreed = False
+        else:
+            agreed = user.agreed_terms
+
+    # Agar foydalanuvchi hali shartlarga rozilik bermagan bo'lsa:
+    if not agreed:
+        await message.answer(PRIVACY_POLICY_TEXT, reply_markup=privacy_policy_kb(), parse_mode="HTML")
+        return
+
+    # Agar allaqachon rozilik bergan bo'lsa, to'g'ridan-to'g'ri bosh menyu ochiladi
+    await render_main_menu(message, tg_user, edit=False)
+
+@router.callback_query(F.data == "accept_privacy_policy")
+async def accept_policy_handler(callback: CallbackQuery):
+    user_id = callback.from_user.id
+
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        user = (await session.execute(stmt)).scalar_one_or_none()
+        if user:
+            user.agreed_terms = True
+            await session.commit()
+
+    await callback.answer("✅ Shartlar qabul qilindi!", show_alert=False)
+    await render_main_menu(callback, callback.from_user, edit=True)
+
+@router.callback_query(F.data == "decline_privacy_policy")
+async def decline_policy_handler(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "❌ <b>Siz foydalanish shartlarini rad etdingiz.</b>\n\n"
+        "Xizmatdan foydalanish uchun shartlarni qabul qilishingiz zarur.\n"
+        "Qayta urinish uchun /start buyrug'ini yuboring.",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_main")
+async def back_to_main(callback: CallbackQuery):
+    await render_main_menu(callback, callback.from_user, edit=True)
     await callback.answer()
 
 @router.callback_query(F.data == "claim_trial")
@@ -127,7 +156,6 @@ async def claim_trial_handler(callback: CallbackQuery):
             await callback.answer("⚠️ Siz avval bepul sinov (Trial) imkoniyatidan foydalangansiz!", show_alert=True)
             return
 
-    # Userbot ulanishi bilan 24 soat avtomatik yoqilishi haqida tushuntirish
     text = (
         "🎁 <b>1 kunlik Bepul Sinov (Trial)</b>\n\n"
         "Sinov muddati zoe ketmasligi uchun, 24 soatlik bepul vaqt "
@@ -172,4 +200,5 @@ async def buy_vip_handler(callback: CallbackQuery):
         "• Guruh va kanallarda chaqmoqdek tez avto-komment qoldirish\n\n"
         "O'zingizga ma'qul tarifni tanlang 👇"
     )
-    await callback.message.edit_text(text
+    await callback.message.edit_text(text, reply_markup=subscription_plans_kb(), parse_mode="HTML")
+    await callback.answer()
