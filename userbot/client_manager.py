@@ -1,10 +1,9 @@
 import logging
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict
 from hydrogram import Client
 from hydrogram.errors import AuthKeyUnregistered, UserDeactivated, SessionRevoked
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from core.config import settings
 from core.database import async_session
@@ -18,13 +17,19 @@ class ClientManager:
         # user_id -> Client obyektlarini saqlash
         self.clients: Dict[int, Client] = {}
 
-    def _attach_handlers(self, client: Client):
-        """Userbot mijoziga buyruqlar va vazifalarni ulash."""
+    def _attach_handlers(self, client: Client, user_id: int):
+        """Userbotga ham buyruqlarni (.ping, .ok, .dw), ham chaqmoqdek tez avto-kommentni ulash."""
         try:
             from userbot.handlers.commands import register_commands
             register_commands(client)
-        except ImportError:
-            logger.warning("Commands moduli hali ulanmagan.")
+        except Exception as e:
+            logger.warning(f"Buyruqlarni ulashda xatolik ({user_id}): {e}")
+
+        try:
+            from userbot.tasks.auto_comment import register_auto_comment
+            register_auto_comment(client, user_id)
+        except Exception as e:
+            logger.warning(f"Avto-kommentni ulashda xatolik ({user_id}): {e}")
 
     async def start_user(self, user_id: int, session_string: str) -> bool:
         """Bitta foydalanuvchining userbotini ishga tushirish."""
@@ -40,8 +45,8 @@ class ClientManager:
                 in_memory=True
             )
 
-            # Buyruqlarni (.ping, .ok) ulash
-            self._attach_handlers(client)
+            # Buyruqlar va vazifalarni ulash
+            self._attach_handlers(client, user_id)
 
             await client.start()
             self.clients[user_id] = client
@@ -77,18 +82,16 @@ class ClientManager:
                 await session.commit()
 
     async def start_all_active_users(self):
-        """Server qayta yoqilganda barcha faol obunasi bor userbotlarni ishga tushirish."""
+        """Server qayta yoqilganda barcha faol obunasi bor userbotlarni avtomatik ishga tushirish."""
         logger.info("🔄 Faol userbot sessiyalari bazadan tekshirilmoqda...")
         now = datetime.utcnow()
 
         async with async_session() as session:
-            stmt = select(UserbotSession).where(
-                UserbotSession.is_active == True
-            )
+            stmt = select(UserbotSession).where(UserbotSession.is_active == True)
             sessions = (await session.execute(stmt)).scalars().all()
 
             for s in sessions:
-                # Obunasi bormi yoki yo'qligini tekshiramiz
+                # Faol obunani tekshirish
                 sub_stmt = select(Subscription).where(
                     Subscription.user_id == s.user_id,
                     Subscription.status == SubscriptionStatus.ACTIVE,
@@ -97,7 +100,6 @@ class ClientManager:
                 active_sub = (await session.execute(sub_stmt)).scalars().first()
 
                 if not active_sub:
-                    # Obunasi tugagan bo'lsa yoqmaymiz
                     continue
 
                 try:
@@ -106,11 +108,10 @@ class ClientManager:
                 except Exception as e:
                     logger.error(f"Sessiyani tiklashda xatolik ({s.user_id}): {e}")
 
-        logger.info(f"🚀 Jami {len(self.clients)} ta faol userbot muvaffaqiyatli ishga tushirildi!")
+        logger.info(f"🚀 Jami {len(self.clients)} ta userbot muvaffaqiyatli ishga tushirildi!")
 
     async def stop_all(self):
-        """Server to'xtaganda barcha mijozlarni xavfsiz to'xtatish."""
-        logger.info("🛑 Barcha userbotlar to'xtatilmoqda...")
+        """Barcha userbotlarni xavfsiz to'xtatish."""
         for user_id in list(self.clients.keys()):
             await self.stop_user(user_id)
 
