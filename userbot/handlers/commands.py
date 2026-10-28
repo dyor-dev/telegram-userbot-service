@@ -3,6 +3,7 @@ import time
 import logging
 from hydrogram import Client, filters
 from hydrogram.types import Message
+from hydrogram.raw import functions, types
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def register_commands(client: Client):
             await m.edit_text("❌ <i>Javob berilgan xabarda media fayl topilmadi.</i>", parse_mode="HTML")
             return
 
-        msg = await m.edit_text("📥 <i>Bir martalik media xavfsiz yuklab olinmoqda...</i>", parse_mode="HTML")
+        msg = await m.edit_text("📥 <i>Bir martalik media xavfsiz saqlanmoqda...</i>", parse_mode="HTML")
 
         try:
             file_path = await target.download()
@@ -66,7 +67,7 @@ def register_commands(client: Client):
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-            await msg.edit_text("✅ <b>Media «Saqlangan xabarlar»ingizga o'chmas qilib yuklandi!</b>", parse_mode="HTML")
+            await msg.edit_text("✅ <b>Media «Saqlangan xabarlar»ingizga o'chmas qilib saqlandi!</b>", parse_mode="HTML")
 
         except Exception as e:
             logger.error(f"Error downloading media: {e}")
@@ -77,29 +78,38 @@ def register_commands(client: Client):
     async def download_stories_cmd(c: Client, m: Message):
         args = m.text.split()
         if len(args) < 2:
-            await m.edit_text("⚠️ <b>Foydalanish tartibi:</b> <code>.dw @username</code>", parse_mode="HTML")
+            await m.edit_text("⚠️ <b>Foydalanish tartibi:</b> <code>.dw @username</code>\nMasalan: <code>.dw @durov</code>", parse_mode="HTML")
             return
 
         target_username = args[1].replace("@", "").strip()
         msg = await m.edit_text(f"🔍 <b>@{target_username}</b> hikoyalari anonim qidirilmoqda...", parse_mode="HTML")
 
         try:
-            target_chat = await c.get_chat(target_username)
-            count = 0
+            # Telegram MTProto orqali peer topish va hikoyalarni olish
+            peer = await c.resolve_peer(target_username)
+            peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
-            # Foydalanuvchining barcha faol hikoyalarini olish
-            async for story in c.get_chat_stories(target_chat.id):
-                file_path = await c.download_media(story)
+            if not peer_stories or not hasattr(peer_stories, "stories") or not peer_stories.stories:
+                await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki profil yopiq.", parse_mode="HTML")
+                return
+
+            count = 0
+            for story in peer_stories.stories:
+                if not isinstance(story, types.StoryItem) or not story.media:
+                    continue
+
+                file_path = await c.download_media(story.media)
                 if file_path:
                     caption = (
-                        f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n"
+                        f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n\n"
                         f"👤 <b>Egasi:</b> @{target_username}\n"
-                        f"📅 <b>Sana:</b> <code>{story.date.strftime('%Y-%m-%d %H:%M:%S')}</code>"
+                        f"🆔 <b>Story ID:</b> <code>{story.id}</code>\n"
+                        "<i>(Egasiga siz ko'rganingiz mutlaqo ko'rinmaydi)</i>"
                     )
-                    # "Saqlangan xabarlar"ga yuborish
-                    if story.photo:
+
+                    if isinstance(story.media, types.MessageMediaPhoto):
                         await c.send_photo("me", file_path, caption=caption, parse_mode="HTML")
-                    elif story.video:
+                    else:
                         await c.send_video("me", file_path, caption=caption, parse_mode="HTML")
 
                     if os.path.exists(file_path):
@@ -107,13 +117,13 @@ def register_commands(client: Client):
                     count += 1
 
             if count > 0:
-                await msg.edit_text(f"✅ <b>@{target_username}</b>ning jami <b>{count} ta</b> hikoyasi «Saqlangan xabarlar»ingizga jo'natildi!", parse_mode="HTML")
+                await msg.edit_text(f"✅ <b>@{target_username}</b>ning jami <b>{count} ta</b> hikoyasi anonim tarzda «Saqlangan xabarlar»ingizga tashlandi!", parse_mode="HTML")
             else:
-                await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida hozirda faol hikoyalar topilmadi.", parse_mode="HTML")
+                await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi.", parse_mode="HTML")
 
         except Exception as e:
             logger.error(f"Story download error: {e}")
-            await msg.edit_text(f"❌ Xatolik: {str(e)} (Profil yopiq yoki username noto'g'ri bo'lishi mumkin)", parse_mode="HTML")
+            await msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}\n<i>(Username noto'g'ri yoki profil yopiq bo'lishi mumkin)</i>", parse_mode="HTML")
 
     # 4. Hisob haqida ma'lumot
     @client.on_message(filters.me & filters.command("info", prefixes="."))
