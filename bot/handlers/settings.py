@@ -7,7 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
 from core.database import async_session
-from database.models import UserbotSettings
+from database.models import UserbotSettings, UserbotSession
 from bot.keyboards.inline import cancel_kb, main_menu_kb
 from userbot.tasks.auto_comment import USER_COMMENT_CACHE
 
@@ -18,6 +18,14 @@ class ManageSettingsStates(StatesGroup):
     waiting_for_text = State()
     waiting_for_channel = State()
     waiting_for_delay = State()
+
+def not_connected_kb():
+    """Userbot ulanmaganda ko'rsatiladigan klaviatura."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔌 Userbotni ulash", callback_data="connect_userbot")
+    builder.button(text="⬅️ Asosiy menyu", callback_data="back_to_main")
+    builder.adjust(1, 1)
+    return builder.as_markup()
 
 def get_settings_keyboard(enabled: bool):
     builder = InlineKeyboardBuilder()
@@ -32,6 +40,15 @@ def get_settings_keyboard(enabled: bool):
     builder.adjust(1, 1, 1, 1, 1, 1)
     return builder.as_markup()
 
+async def is_userbot_connected(session, user_id: int) -> bool:
+    """Foydalanuvchi userbotini ulaganmi yo'qmi tekshirish."""
+    stmt = select(UserbotSession).where(
+        UserbotSession.user_id == user_id,
+        UserbotSession.is_active == True
+    )
+    sess = (await session.execute(stmt)).scalar_one_or_none()
+    return bool(sess)
+
 async def get_user_settings(session, user_id: int) -> UserbotSettings:
     stmt = select(UserbotSettings).where(UserbotSettings.user_id == user_id)
     settings = (await session.execute(stmt)).scalar_one_or_none()
@@ -43,7 +60,6 @@ async def get_user_settings(session, user_id: int) -> UserbotSettings:
     return settings
 
 def sync_cache(user_id: int, settings: UserbotSettings):
-    """Bazada o'zgargan ma'lumotni darhol RAM keshiga kiritish."""
     USER_COMMENT_CACHE[user_id] = {
         "enabled": settings.auto_comment_enabled,
         "text": settings.comment_text,
@@ -55,6 +71,18 @@ def sync_cache(user_id: int, settings: UserbotSettings):
 async def show_settings(callback: CallbackQuery):
     user_id = callback.from_user.id
     async with async_session() as session:
+        # Userbot ulanganligini tekshirish
+        if not await is_userbot_connected(session, user_id):
+            text = (
+                "⚠️ <b>Userbot hali ulanmagan!</b>\n\n"
+                "Sozlamalarni (avto-komment, nishondagi kanallar, tezlik) boshqarish uchun "
+                "avval shaxsiy Telegram hisobingizga userbotni ulashingiz kerak.\n\n"
+                "Hisobingizni ulash uchun quyidagi tugmani bosing 👇"
+            )
+            await callback.message.edit_text(text, reply_markup=not_connected_kb(), parse_mode="HTML")
+            await callback.answer()
+            return
+
         st = await get_user_settings(session, user_id)
         sync_cache(user_id, st)
 
@@ -76,6 +104,10 @@ async def show_settings(callback: CallbackQuery):
 async def toggle_status(callback: CallbackQuery):
     user_id = callback.from_user.id
     async with async_session() as session:
+        if not await is_userbot_connected(session, user_id):
+            await callback.answer("⚠️ Avval userbotni ulang!", show_alert=True)
+            return
+
         st = await get_user_settings(session, user_id)
         st.auto_comment_enabled = not st.auto_comment_enabled
         await session.commit()
@@ -85,6 +117,12 @@ async def toggle_status(callback: CallbackQuery):
 
 @router.callback_query(F.data == "set_comment_text")
 async def start_set_text(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    async with async_session() as session:
+        if not await is_userbot_connected(session, user_id):
+            await callback.answer("⚠️ Avval userbotni ulang!", show_alert=True)
+            return
+
     await state.set_state(ManageSettingsStates.waiting_for_text)
     await callback.message.edit_text(
         "✏️ Postlar tagiga qoldirmoqchi bo'lgan <b>yangi izoh matnini</b> yuboring:\n"
@@ -110,6 +148,12 @@ async def save_new_text(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "add_target_channel")
 async def start_add_channel(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    async with async_session() as session:
+        if not await is_userbot_connected(session, user_id):
+            await callback.answer("⚠️ Avval userbotni ulang!", show_alert=True)
+            return
+
     await state.set_state(ManageSettingsStates.waiting_for_channel)
     await callback.message.edit_text(
         "➕ Yangi postlariga avto-izoh yozilishi kerak bo'lgan <b>kanal usernamesini</b> yuboring:\n\n"
@@ -144,6 +188,10 @@ async def save_new_channels(message: Message, state: FSMContext):
 async def clear_channels(callback: CallbackQuery):
     user_id = callback.from_user.id
     async with async_session() as session:
+        if not await is_userbot_connected(session, user_id):
+            await callback.answer("⚠️ Avval userbotni ulang!", show_alert=True)
+            return
+
         st = await get_user_settings(session, user_id)
         st.target_channels = []
         await session.commit()
@@ -154,6 +202,12 @@ async def clear_channels(callback: CallbackQuery):
 
 @router.callback_query(F.data == "set_comment_delay")
 async def start_set_delay(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    async with async_session() as session:
+        if not await is_userbot_connected(session, user_id):
+            await callback.answer("⚠️ Avval userbotni ulang!", show_alert=True)
+            return
+
     await state.set_state(ManageSettingsStates.waiting_for_delay)
     await callback.message.edit_text(
         "⏱ Yangi post chiqqandan keyin necha soniya kutib izoh yozilsin?\n\n"
@@ -169,7 +223,7 @@ async def start_set_delay(callback: CallbackQuery, state: FSMContext):
 async def save_delay(message: Message, state: FSMContext):
     user_id = message.from_user.id
     if not message.text.isdigit():
-        await message.answer("❌ Iltimos, faqat musbat raqam kiriting (masalan: 0):")
+        await message.answer("❌ Iltimos, faqat raqam kiriting (masalan: 0):")
         return
 
     delay = int(message.text)
