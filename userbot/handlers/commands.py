@@ -49,7 +49,34 @@ def register_commands(client: Client):
             await m.edit_text(info_text, parse_mode=ParseMode.HTML)
             return
 
-        # 3. .ok BUYRUG'I (Bir martalik mediani izsiz saqlash)
+        # 3. .del BUYRUG'I (Barcha o'z xabarlarini va buyruqning o'zini tozalash)
+        elif text.lower() == ".del":
+            chat_id = m.chat.id
+            try:
+                me = await c.get_me()
+                ids_to_delete = [m.id]
+
+                # Oxirgi 100 ta xabar ichidan akkaunt egasining xabarlarini yig'ish
+                async for message in c.get_chat_history(chat_id, limit=100):
+                    if (message.from_user and message.from_user.id == me.id) or message.outgoing:
+                        ids_to_delete.append(message.id)
+
+                # Xabarlarni bittada o'chirish (Telegram limitiga mos 100 talik paketlarda)
+                if ids_to_delete:
+                    # Takrorlanmas ID larni ajratish
+                    unique_ids = list(set(ids_to_delete))
+                    for i in range(0, len(unique_ids), 100):
+                        chunk = unique_ids[i:i + 100]
+                        await c.delete_messages(chat_id=chat_id, message_ids=chunk)
+            except Exception as e:
+                logger.error(f"Error in .del command: {e}")
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+            return
+
+        # 4. .ok BUYRUG'I (Bir martalik mediani izsiz saqlash)
         elif text.lower().startswith(".ok"):
             target = m.reply_to_message
             if not target:
@@ -93,7 +120,7 @@ def register_commands(client: Client):
                     pass
             return
 
-        # 4. .dw @username BUYRUG'I (To'g'ri .mp4 va .jpg formatida yuklash)
+        # 5. .dw @username BUYRUG'I (Anonim hikoyalar)
         elif text.lower().startswith(".dw"):
             args = text.split()
             if len(args) < 2:
@@ -106,7 +133,6 @@ def register_commands(client: Client):
             try:
                 peer = await c.resolve_peer(target_username)
 
-                # Faol hikoya ID larini olish
                 peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
                 story_ids = []
@@ -117,7 +143,6 @@ def register_commands(client: Client):
                     await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
                     return
 
-                # Hikoyalarni olish
                 stories_res = await c.invoke(functions.stories.GetStoriesByID(peer=peer, id=story_ids))
                 raw_stories = getattr(stories_res, "stories", [])
 
@@ -131,7 +156,6 @@ def register_commands(client: Client):
                     is_video = False
                     target_ext = "jpg"
 
-                    # Video yoki Rasm ekanligini aniqlash va mos format belgilash
                     if isinstance(media_obj, types.MessageMediaDocument) and media_obj.document:
                         doc = media_obj.document
                         parsed_file = high_types.Document._parse(c, doc, "story.mp4")
@@ -146,7 +170,6 @@ def register_commands(client: Client):
                         continue
 
                     try:
-                        # Aniq nom bilan (.mp4 yoki .jpg) yuklash: zip bo'lib qolmaydi!
                         custom_filename = f"downloads/story_{item.id}_{int(time.time())}.{target_ext}"
                         file_path = await c.download_media(parsed_file.file_id, file_name=custom_filename)
 
@@ -163,7 +186,6 @@ def register_commands(client: Client):
                             else:
                                 await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
 
-                            # Faylni tozalash
                             if os.path.exists(file_path):
                                 os.remove(file_path)
                             count += 1
