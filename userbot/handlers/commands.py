@@ -4,6 +4,7 @@ import random
 import logging
 from hydrogram import Client, filters
 from hydrogram.types import Message
+from hydrogram import types as high_types
 from hydrogram.enums import ParseMode
 from hydrogram.raw.functions import Ping
 from hydrogram.raw import functions, types
@@ -92,7 +93,7 @@ def register_commands(client: Client):
                     pass
             return
 
-        # 4. .dw @username BUYRUG'I (Anonim hikoyalar)
+        # 4. .dw @username BUYRUG'I (Anonim hikoyalar - 100% TUZATILGAN)
         elif text.lower().startswith(".dw"):
             args = text.split()
             if len(args) < 2:
@@ -116,21 +117,37 @@ def register_commands(client: Client):
                     await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
                     return
 
-                # ID lar orqali to'liq yuklab olinadigan hikoyalar obyektini olish
+                # ID lar orqali to'liq hikoyalar obyektlarini olish
                 stories_res = await c.invoke(functions.stories.GetStoriesByID(peer=peer, id=story_ids))
                 raw_stories = getattr(stories_res, "stories", [])
 
                 count = 0
                 for item in raw_stories:
-                    # Agar media mavjud bo'lmasa o'tkazib yuborish
                     if not hasattr(item, "media") or not item.media:
                         continue
 
                     media_obj = item.media
+                    parsed_file = None
+                    is_video = False
+
+                    # Xom MTProto obyektidan file_id yaratuvchi to'g'ri parser:
+                    if isinstance(media_obj, types.MessageMediaPhoto) and media_obj.photo:
+                        parsed_file = high_types.Photo._parse(c, media_obj.photo)
+                    elif isinstance(media_obj, types.MessageMediaDocument) and media_obj.document:
+                        doc = media_obj.document
+                        parsed_file = high_types.Document._parse(c, doc, "story.mp4")
+                        # Video ekanligini aniqlash
+                        for attr in getattr(doc, "attributes", []):
+                            if isinstance(attr, types.DocumentAttributeVideo):
+                                is_video = True
+                                break
+
+                    if not parsed_file or not getattr(parsed_file, "file_id", None):
+                        continue
 
                     try:
-                        # MTProto mediani bevosita yuklab olish
-                        file_path = await c.download_media(media_obj)
+                        # Tayyor file_id orqali yuklab olish
+                        file_path = await c.download_media(parsed_file.file_id)
                         if file_path:
                             caption = (
                                 f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n\n"
@@ -139,10 +156,12 @@ def register_commands(client: Client):
                                 "<i>(Egasiga siz ko'rganingiz mutlaqo ko'rinmaydi)</i>"
                             )
 
-                            if isinstance(media_obj, types.MessageMediaPhoto):
+                            if is_video:
+                                await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                            elif isinstance(media_obj, types.MessageMediaPhoto):
                                 await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
                             else:
-                                await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                                await c.send_document("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
 
                             if os.path.exists(file_path):
                                 os.remove(file_path)
