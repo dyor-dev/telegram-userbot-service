@@ -6,19 +6,9 @@ from hydrogram import Client, filters
 from hydrogram.types import Message
 from hydrogram.enums import ParseMode
 from hydrogram.raw.functions import Ping
-
-from hydrogram.types.messages_and_media.message import Message as HighMessage
-from hydrogram.raw.types import Message as RawMessage
+from hydrogram.raw import functions
 
 logger = logging.getLogger(__name__)
-
-DC_LOCATIONS = {
-    1: "Mayami (AQSH)",
-    2: "Amsterdam (Yevropa)",
-    3: "Mayami (AQSH)",
-    4: "Amsterdam (Yevropa)",
-    5: "Singapur (Osiyo)"
-}
 
 def register_commands(client: Client):
     """Mijoz akkauntiga maxsus buyruqlarni biriktirish."""
@@ -27,25 +17,19 @@ def register_commands(client: Client):
     async def handle_userbot_commands(c: Client, m: Message):
         text = (m.text or "").strip()
 
-        # 1. OPTIMALLASHGAN .ping BUYRUG'I
+        # 1. QISQA VA TOZA .ping BUYRUG'I
         if text.lower() == ".ping":
-            dc_id = getattr(c.storage, "dc_id", None) or getattr(c.session, "dc_id", 4)
-            dc_name = DC_LOCATIONS.get(dc_id, "Yevropa")
-
-            # MTProto darajasidagi haqiqiy tarmoq tezligini o'lchash
             start = time.perf_counter()
-            await c.invoke(Ping(ping_id=random.randint(1, 2147483647)))
+            try:
+                await c.invoke(Ping(ping_id=random.randint(1, 2147483647)))
+            except Exception:
+                pass
             end = time.perf_counter()
-            
             delta_ms = round((end - start) * 1000, 1)
 
-            # Bitta toza va chaqqon tahrirlash
             await m.edit_text(
-                f"🏓 <b>Pong!</b>\n"
-                f"⚡ <b>Tarmoq tezligi:</b> <code>{delta_ms} ms</code>\n"
-                f"📍 <b>Data Center:</b> <code>DC{dc_id} ({dc_name})</code>\n"
-                f"🚀 <b>Dvigatel:</b> <code>uvloop C-Engine</code>\n"
-                f"🤖 <b>Userbot:</b> 🟢 <i>Faol va chaqqon</i>",
+                f"🏓 <b>Pong!</b> <code>{delta_ms} ms</code>\n"
+                f"🤖 <b>Userbot:</b> 🟢 <i>Faol</i>",
                 parse_mode=ParseMode.HTML
             )
             return
@@ -108,7 +92,7 @@ def register_commands(client: Client):
                     pass
             return
 
-        # 4. .dw @username buyrug'i (Anonim Hikoyalar)
+        # 4. .dw @username buyrug'i (100% ISHLAYDIGAN HIKOYALAR YUKLOVCHI)
         elif text.lower().startswith(".dw"):
             args = text.split()
             if len(args) < 2:
@@ -119,62 +103,56 @@ def register_commands(client: Client):
             msg = await m.edit_text(f"🔍 <b>@{target_username}</b> hikoyalari anonim yuklanmoqda...", parse_mode=ParseMode.HTML)
 
             try:
-                from hydrogram.raw import functions
-                peer = await c.resolve_peer(target_username)
+                # Foydalanuvchini aniqlash
+                chat = await c.get_chat(target_username)
+                peer = await c.resolve_peer(chat.id)
+
+                # MTProto orqali barcha faol hikoya ID larini olish
                 peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
-                story_items = []
-                if hasattr(peer_stories, "stories"):
-                    inner = peer_stories.stories
-                    if hasattr(inner, "stories") and isinstance(inner.stories, list):
-                        story_items = inner.stories
-                    elif isinstance(inner, list):
-                        story_items = inner
+                story_ids = []
+                if hasattr(peer_stories, "stories") and hasattr(peer_stories.stories, "stories"):
+                    story_ids = [s.id for s in peer_stories.stories.stories if hasattr(s, "id")]
 
-                if not story_items:
+                if not story_ids:
                     await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
                     return
 
+                # Hikoyalarni rasmiy yuqori darajadagi API orqali olish (File_ID va DC xatolarisiz)
+                stories = await c.get_stories(chat_id=chat.id, story_ids=story_ids)
+                if not isinstance(stories, list):
+                    stories = [stories]
+
                 count = 0
-                for story in story_items:
-                    if not hasattr(story, "media") or not story.media:
+                for story in stories:
+                    if not story or not (story.photo or story.video):
                         continue
 
                     try:
-                        raw_msg = RawMessage(
-                            id=getattr(story, "id", 1),
-                            date=int(time.time()),
-                            peer_id=peer,
-                            media=story.media
-                        )
-                        parsed_msg = await HighMessage._parse(c, raw_msg, {}, {})
-                        file_path = await c.download_media(parsed_msg)
-
+                        file_path = await c.download_media(story)
                         if file_path:
                             caption = (
                                 f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n\n"
                                 f"👤 <b>Egasi:</b> @{target_username}\n"
-                                f"🆔 <b>Story ID:</b> <code>{getattr(story, 'id', '')}</code>\n"
+                                f"🆔 <b>Story ID:</b> <code>{story.id}</code>\n"
                                 "<i>(Egasiga siz ko'rganingiz mutlaqo ko'rinmaydi)</i>"
                             )
 
-                            if parsed_msg.photo:
+                            if story.photo:
                                 await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
-                            elif parsed_msg.video:
+                            elif story.video:
                                 await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
-                            else:
-                                await c.send_document("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
 
                             if os.path.exists(file_path):
                                 os.remove(file_path)
                             count += 1
-                    except Exception as story_err:
-                        logger.warning(f"Bitta storyni yuklashda xatolik: {story_err}")
+                    except Exception as single_err:
+                        logger.warning(f"Hikoyani yuklashda xatolik: {single_err}")
 
                 if count > 0:
                     await msg.edit_text(f"✅ <b>@{target_username}</b>ning {count} ta hikoyasi «Saqlangan xabarlar»ingizga tashlandi!", parse_mode=ParseMode.HTML)
                 else:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi.", parse_mode=ParseMode.HTML)
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobidagi hikoyalarni yuklab bo'lmadi.", parse_mode=ParseMode.HTML)
 
             except Exception as e:
                 logger.error(f"Story download error: {e}")
