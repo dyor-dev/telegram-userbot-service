@@ -6,7 +6,7 @@ from hydrogram import Client, filters
 from hydrogram.types import Message
 from hydrogram.enums import ParseMode
 from hydrogram.raw.functions import Ping
-from hydrogram.raw import functions
+from hydrogram.raw import functions, types
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ def register_commands(client: Client):
     async def handle_userbot_commands(c: Client, m: Message):
         text = (m.text or "").strip()
 
-        # 1. QISQA VA TOZA .ping BUYRUG'I
+        # 1. QISQA .ping BUYRUG'I
         if text.lower() == ".ping":
             start = time.perf_counter()
             try:
@@ -34,7 +34,7 @@ def register_commands(client: Client):
             )
             return
 
-        # 2. .info buyrug'i
+        # 2. .info BUYRUG'I
         elif text.lower() == ".info":
             me = await c.get_me()
             info_text = (
@@ -48,7 +48,7 @@ def register_commands(client: Client):
             await m.edit_text(info_text, parse_mode=ParseMode.HTML)
             return
 
-        # 3. .ok buyrug'i (Bir martalik mediani IZZSIZ saqlash)
+        # 3. .ok BUYRUG'I (Bir martalik mediani izsiz saqlash)
         elif text.lower().startswith(".ok"):
             target = m.reply_to_message
             if not target:
@@ -92,7 +92,7 @@ def register_commands(client: Client):
                     pass
             return
 
-        # 4. .dw @username buyrug'i (100% ISHLAYDIGAN HIKOYALAR YUKLOVCHI)
+        # 4. .dw @username BUYRUG'I (Anonim hikoyalar)
         elif text.lower().startswith(".dw"):
             args = text.split()
             if len(args) < 2:
@@ -103,11 +103,9 @@ def register_commands(client: Client):
             msg = await m.edit_text(f"🔍 <b>@{target_username}</b> hikoyalari anonim yuklanmoqda...", parse_mode=ParseMode.HTML)
 
             try:
-                # Foydalanuvchini aniqlash
-                chat = await c.get_chat(target_username)
-                peer = await c.resolve_peer(chat.id)
+                peer = await c.resolve_peer(target_username)
 
-                # MTProto orqali barcha faol hikoya ID larini olish
+                # Foydalanuvchining faol hikoyalari ID larini olish
                 peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
                 story_ids = []
@@ -118,36 +116,39 @@ def register_commands(client: Client):
                     await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
                     return
 
-                # Hikoyalarni rasmiy yuqori darajadagi API orqali olish (File_ID va DC xatolarisiz)
-                stories = await c.get_stories(chat_id=chat.id, story_ids=story_ids)
-                if not isinstance(stories, list):
-                    stories = [stories]
+                # ID lar orqali to'liq yuklab olinadigan hikoyalar obyektini olish
+                stories_res = await c.invoke(functions.stories.GetStoriesByID(peer=peer, id=story_ids))
+                raw_stories = getattr(stories_res, "stories", [])
 
                 count = 0
-                for story in stories:
-                    if not story or not (story.photo or story.video):
+                for item in raw_stories:
+                    # Agar media mavjud bo'lmasa o'tkazib yuborish
+                    if not hasattr(item, "media") or not item.media:
                         continue
 
+                    media_obj = item.media
+
                     try:
-                        file_path = await c.download_media(story)
+                        # MTProto mediani bevosita yuklab olish
+                        file_path = await c.download_media(media_obj)
                         if file_path:
                             caption = (
                                 f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n\n"
                                 f"👤 <b>Egasi:</b> @{target_username}\n"
-                                f"🆔 <b>Story ID:</b> <code>{story.id}</code>\n"
+                                f"🆔 <b>Story ID:</b> <code>{getattr(item, 'id', '')}</code>\n"
                                 "<i>(Egasiga siz ko'rganingiz mutlaqo ko'rinmaydi)</i>"
                             )
 
-                            if story.photo:
+                            if isinstance(media_obj, types.MessageMediaPhoto):
                                 await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
-                            elif story.video:
+                            else:
                                 await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
 
                             if os.path.exists(file_path):
                                 os.remove(file_path)
                             count += 1
-                    except Exception as single_err:
-                        logger.warning(f"Hikoyani yuklashda xatolik: {single_err}")
+                    except Exception as download_err:
+                        logger.warning(f"Bitta hikoyani yuklashda xatolik: {download_err}")
 
                 if count > 0:
                     await msg.edit_text(f"✅ <b>@{target_username}</b>ning {count} ta hikoyasi «Saqlangan xabarlar»ingizga tashlandi!", parse_mode=ParseMode.HTML)
@@ -155,6 +156,6 @@ def register_commands(client: Client):
                     await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobidagi hikoyalarni yuklab bo'lmadi.", parse_mode=ParseMode.HTML)
 
             except Exception as e:
-                logger.error(f"Story download error: {e}")
+                logger.error(f"Story error: {e}")
                 await msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}", parse_mode=ParseMode.HTML)
             return
