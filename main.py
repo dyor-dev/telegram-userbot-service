@@ -36,9 +36,11 @@ async def init_db():
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS agreed_terms BOOLEAN DEFAULT FALSE;"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;"))
+            await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS warned_12h BOOLEAN DEFAULT FALSE;"))
+            await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS warned_1h BOOLEAN DEFAULT FALSE;"))
         except Exception:
             pass
-    logger.info("✅ PostgreSQL jadvallari va Referal ustunlari tayyorlandi!")
+    logger.info("✅ PostgreSQL jadvallari va Ogohlantirish ustunlari tayyorlandi!")
 
 async def health_check(request):
     return web.Response(text="Bot va Userbot tizimi 100% faol holatda!", status=200)
