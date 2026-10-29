@@ -93,7 +93,7 @@ def register_commands(client: Client):
                     pass
             return
 
-        # 4. .dw @username BUYRUG'I (Anonim hikoyalar - 100% TUZATILGAN)
+        # 4. .dw @username BUYRUG'I (To'g'ri .mp4 va .jpg formatida yuklash)
         elif text.lower().startswith(".dw"):
             args = text.split()
             if len(args) < 2:
@@ -106,7 +106,7 @@ def register_commands(client: Client):
             try:
                 peer = await c.resolve_peer(target_username)
 
-                # Foydalanuvchining faol hikoyalari ID larini olish
+                # Faol hikoya ID larini olish
                 peer_stories = await c.invoke(functions.stories.GetPeerStories(peer=peer))
 
                 story_ids = []
@@ -117,7 +117,7 @@ def register_commands(client: Client):
                     await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
                     return
 
-                # ID lar orqali to'liq hikoyalar obyektlarini olish
+                # Hikoyalarni olish
                 stories_res = await c.invoke(functions.stories.GetStoriesByID(peer=peer, id=story_ids))
                 raw_stories = getattr(stories_res, "stories", [])
 
@@ -129,26 +129,28 @@ def register_commands(client: Client):
                     media_obj = item.media
                     parsed_file = None
                     is_video = False
+                    target_ext = "jpg"
 
-                    # Xom MTProto obyektidan file_id yaratuvchi to'g'ri parser:
-                    if isinstance(media_obj, types.MessageMediaPhoto) and media_obj.photo:
-                        parsed_file = high_types.Photo._parse(c, media_obj.photo)
-                    elif isinstance(media_obj, types.MessageMediaDocument) and media_obj.document:
+                    # Video yoki Rasm ekanligini aniqlash va mos format belgilash
+                    if isinstance(media_obj, types.MessageMediaDocument) and media_obj.document:
                         doc = media_obj.document
                         parsed_file = high_types.Document._parse(c, doc, "story.mp4")
-                        # Video ekanligini aniqlash
-                        for attr in getattr(doc, "attributes", []):
-                            if isinstance(attr, types.DocumentAttributeVideo):
-                                is_video = True
-                                break
+                        is_video = True
+                        target_ext = "mp4"
+                    elif isinstance(media_obj, types.MessageMediaPhoto) and media_obj.photo:
+                        parsed_file = high_types.Photo._parse(c, media_obj.photo)
+                        is_video = False
+                        target_ext = "jpg"
 
                     if not parsed_file or not getattr(parsed_file, "file_id", None):
                         continue
 
                     try:
-                        # Tayyor file_id orqali yuklab olish
-                        file_path = await c.download_media(parsed_file.file_id)
-                        if file_path:
+                        # Aniq nom bilan (.mp4 yoki .jpg) yuklash: zip bo'lib qolmaydi!
+                        custom_filename = f"downloads/story_{item.id}_{int(time.time())}.{target_ext}"
+                        file_path = await c.download_media(parsed_file.file_id, file_name=custom_filename)
+
+                        if file_path and os.path.exists(file_path):
                             caption = (
                                 f"👁‍🗨 <b>Anonim ko'rilgan hikoya (Story)</b>\n\n"
                                 f"👤 <b>Egasi:</b> @{target_username}\n"
@@ -158,11 +160,10 @@ def register_commands(client: Client):
 
                             if is_video:
                                 await c.send_video("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
-                            elif isinstance(media_obj, types.MessageMediaPhoto):
-                                await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
                             else:
-                                await c.send_document("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
+                                await c.send_photo("me", file_path, caption=caption, parse_mode=ParseMode.HTML)
 
+                            # Faylni tozalash
                             if os.path.exists(file_path):
                                 os.remove(file_path)
                             count += 1
