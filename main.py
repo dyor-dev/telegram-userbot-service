@@ -2,7 +2,6 @@ import os
 import asyncio
 import logging
 
-# Ultra-tezkor C-dvigatelini faollashtirish
 try:
     import uvloop
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -35,9 +34,11 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         try:
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS agreed_terms BOOLEAN DEFAULT FALSE;"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;"))
         except Exception:
             pass
-    logger.info("✅ PostgreSQL jadvallari muvaffaqiyatli tekshirildi va tayyorlandi!")
+    logger.info("✅ PostgreSQL jadvallari va Referal ustunlari tayyorlandi!")
 
 async def health_check(request):
     return web.Response(text="Bot va Userbot tizimi 100% faol holatda!", status=200)
@@ -55,7 +56,7 @@ async def start_web_server():
     logger.info(f"🌐 Health-check serveri {port}-portda ishga tushirildi.")
 
 async def main():
-    logger.info("🚀 Tizim ishga tushirilmoqda (uvloop C-dvigateli bilan)...")
+    logger.info("🚀 Tizim ishga tushirilmoqda...")
 
     await init_db()
 
