@@ -1,15 +1,24 @@
 import os
 import time
+import random
 import logging
 from hydrogram import Client, filters
 from hydrogram.types import Message
 from hydrogram.enums import ParseMode
+from hydrogram.raw.functions import Ping
 
-# Hikoyalarni to'g'ri o'qish uchun yuqori darajadagi parserlar
 from hydrogram.types.messages_and_media.message import Message as HighMessage
 from hydrogram.raw.types import Message as RawMessage
 
 logger = logging.getLogger(__name__)
+
+DC_LOCATIONS = {
+    1: "Mayami (AQSH)",
+    2: "Amsterdam (Yevropa)",
+    3: "Mayami (AQSH)",
+    4: "Amsterdam (Yevropa)",
+    5: "Singapur (Osiyo)"
+}
 
 def register_commands(client: Client):
     """Mijoz akkauntiga maxsus buyruqlarni biriktirish."""
@@ -18,16 +27,24 @@ def register_commands(client: Client):
     async def handle_userbot_commands(c: Client, m: Message):
         text = (m.text or "").strip()
 
-        # 1. .ping buyrug'i
+        # 1. OPTIMALLASHGAN .ping BUYRUG'I
         if text.lower() == ".ping":
-            start = time.time()
-            msg = await m.edit_text("🏓 <i>Pong...</i>", parse_mode=ParseMode.HTML)
-            end = time.time()
-            delta_ms = round((end - start) * 1000)
+            dc_id = getattr(c.storage, "dc_id", None) or getattr(c.session, "dc_id", 4)
+            dc_name = DC_LOCATIONS.get(dc_id, "Yevropa")
 
-            await msg.edit_text(
+            # MTProto darajasidagi haqiqiy tarmoq tezligini o'lchash
+            start = time.perf_counter()
+            await c.invoke(Ping(ping_id=random.randint(1, 2147483647)))
+            end = time.perf_counter()
+            
+            delta_ms = round((end - start) * 1000, 1)
+
+            # Bitta toza va chaqqon tahrirlash
+            await m.edit_text(
                 f"🏓 <b>Pong!</b>\n"
-                f"⚡ <b>Tezlik:</b> <code>{delta_ms} ms</code>\n"
+                f"⚡ <b>Tarmoq tezligi:</b> <code>{delta_ms} ms</code>\n"
+                f"📍 <b>Data Center:</b> <code>DC{dc_id} ({dc_name})</code>\n"
+                f"🚀 <b>Dvigatel:</b> <code>uvloop C-Engine</code>\n"
                 f"🤖 <b>Userbot:</b> 🟢 <i>Faol va chaqqon</i>",
                 parse_mode=ParseMode.HTML
             )
@@ -42,7 +59,7 @@ def register_commands(client: Client):
                 f"• ID: <code>{me.id}</code>\n"
                 f"• Username: @{me.username or 'mavjud emas'}\n"
                 f"• Premium: {'⭐ Ha' if me.is_premium else 'Oddiy'}\n"
-                f"• Tizim: <b>SaaS Userbot Service (v1.0)</b>"
+                f"• Tizim: <b>SaaS Userbot Service (v2.0 Turbo)</b>"
             )
             await m.edit_text(info_text, parse_mode=ParseMode.HTML)
             return
@@ -115,7 +132,7 @@ def register_commands(client: Client):
                         story_items = inner
 
                 if not story_items:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar (Stories) topilmadi yoki hisob yopiq.", parse_mode=ParseMode.HTML)
                     return
 
                 count = 0
@@ -124,7 +141,6 @@ def register_commands(client: Client):
                         continue
 
                     try:
-                        # Xom Stories ni yuqori darajadagi xabarga o'girib, file_id hosil qilish
                         raw_msg = RawMessage(
                             id=getattr(story, "id", 1),
                             date=int(time.time()),
@@ -132,8 +148,6 @@ def register_commands(client: Client):
                             media=story.media
                         )
                         parsed_msg = await HighMessage._parse(c, raw_msg, {}, {})
-
-                        # Yuqori darajadagi xabarni yuklab olish
                         file_path = await c.download_media(parsed_msg)
 
                         if file_path:
@@ -160,7 +174,7 @@ def register_commands(client: Client):
                 if count > 0:
                     await msg.edit_text(f"✅ <b>@{target_username}</b>ning {count} ta hikoyasi «Saqlangan xabarlar»ingizga tashlandi!", parse_mode=ParseMode.HTML)
                 else:
-                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobidagi hikoyalarni yuklab bo'lmadi (profil yopiq bo'lishi mumkin).", parse_mode=ParseMode.HTML)
+                    await msg.edit_text(f"ℹ️ <b>@{target_username}</b> hisobida faol hikoyalar topilmadi.", parse_mode=ParseMode.HTML)
 
             except Exception as e:
                 logger.error(f"Story download error: {e}")
