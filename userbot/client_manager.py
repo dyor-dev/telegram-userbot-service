@@ -1,3 +1,4 @@
+import random
 import asyncio
 import logging
 from datetime import datetime
@@ -35,27 +36,36 @@ class ClientManager:
             logger.warning(f"Avto-kommentni ulashda xatolik ({user_id}): {e}")
 
     async def _start_keepalive_if_needed(self):
-        """Anti-Sleep (uxlab qolishga qarshi) fon siklini faollashtirish."""
+        """5 soniyalik giper-tezkor anti-sleep siklini ishga tushirish."""
         if self._keepalive_task is None or self._keepalive_task.done():
             self._keepalive_task = asyncio.create_task(self._keep_alive_loop())
-            logger.info("🔥 Userbot Keep-Alive (uxlab qolishdan himoya) tizimi ishga tushirildi.")
+            logger.info("⚡ Giper-tezkor 5s Keep-Alive tizimi ishga tushirildi.")
+
+    async def _ping_single_client(self, client: Client):
+        """Bitta mijozga yengil tasodifiy MTProto ping yuborish."""
+        try:
+            if client.is_connected:
+                await client.invoke(Ping(ping_id=random.randint(1, 2147483647)))
+        except (AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired):
+            pass
+        except Exception:
+            pass
 
     async def _keep_alive_loop(self):
-        """Har 30 soniyada barcha ulangan userbotlarni issiq (Hot) holatda ushlab turish."""
+        """Barcha userbotlarni har 5 soniyada PARALLEL ravishda olovdek shay ushlab turish."""
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(5)
             if not self.clients:
                 continue
 
-            for user_id, client in list(self.clients.items()):
-                try:
-                    if client.is_connected:
-                        # Telegram serveriga 8 baytlik eng yengil keep-alive ping yuborish
-                        await client.invoke(Ping(ping_id=0))
-                except (AuthKeyUnregistered, UserDeactivated, SessionRevoked, SessionExpired):
-                    continue
-                except Exception:
-                    pass
+            # Barcha mijozlarni navbat kutmasdan bir zumda parallel pinglash
+            tasks = [
+                self._ping_single_client(client)
+                for client in list(self.clients.values())
+                if client.is_connected
+            ]
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     async def start_user(self, user_id: int, session_string: str) -> bool:
         if user_id in self.clients:
@@ -75,7 +85,6 @@ class ClientManager:
             self.clients[user_id] = client
             logger.info(f"✅ Userbot ishga tushdi: User ID {user_id}")
 
-            # Keep-alive siklini yoqish
             await self._start_keepalive_if_needed()
             return True
 
