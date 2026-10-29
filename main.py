@@ -1,6 +1,14 @@
 import os
 import asyncio
 import logging
+
+# Ultra-tezkor C-dvigatelini faollashtirish
+try:
+    import uvloop
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+except ImportError:
+    pass
+
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -23,10 +31,8 @@ logging.basicConfig(
 logger = logging.getLogger("UserbotService")
 
 async def init_db():
-    """Ma'lumotlar bazasi jadvallarini avtomatik yaratish va yangilash."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Agar yangi ustun hali qo'shilmagan bo'lsa, avtomatik qo'shish
         try:
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS agreed_terms BOOLEAN DEFAULT FALSE;"))
         except Exception:
@@ -49,7 +55,7 @@ async def start_web_server():
     logger.info(f"🌐 Health-check serveri {port}-portda ishga tushirildi.")
 
 async def main():
-    logger.info("🚀 Tizim ishga tushirilmoqda...")
+    logger.info("🚀 Tizim ishga tushirilmoqda (uvloop C-dvigateli bilan)...")
 
     await init_db()
 
