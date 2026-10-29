@@ -1,102 +1,107 @@
-import os
-import asyncio
-import logging
-
-try:
-    import uvloop
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-except ImportError:
-    pass
-
-from aiohttp import web
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import text
-
-from core.config import settings
-from core.database import engine, Base
-from database import models
-
-from bot.handlers import start, auth, settings as user_settings, payment, admin
-from userbot.client_manager import client_manager
-from scheduler.checker import check_expired_subscriptions
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+from datetime import datetime
+from enum import Enum as PyEnum
+from sqlalchemy import (
+    BigInteger, String, Boolean, DateTime,
+    ForeignKey, Text, Integer, Enum, JSON
 )
-logger = logging.getLogger("UserbotService")
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from core.database import Base
 
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        try:
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS agreed_terms BOOLEAN DEFAULT FALSE;"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;"))
-        except Exception:
-            pass
-    logger.info("✅ PostgreSQL jadvallari va Referal ustunlari tayyorlandi!")
+class PlanType(str, PyEnum):
+    TRIAL = "trial"
+    VIP_1 = "vip_1"
+    VIP_7 = "vip_7"
+    VIP_15 = "vip_15"
+    CUSTOM = "custom"
 
-async def health_check(request):
-    return web.Response(text="Bot va Userbot tizimi 100% faol holatda!", status=200)
+class SubscriptionStatus(str, PyEnum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
 
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    app.router.add_get("/health", health_check)
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    username: Mapped[str] = mapped_column(String(64), nullable=True)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     
-    port = int(os.environ.get("PORT", 8080))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logger.info(f"🌐 Health-check serveri {port}-portda ishga tushirildi.")
+    agreed_terms: Mapped[bool] = mapped_column(Boolean, default=False)
 
-async def main():
-    logger.info("🚀 Tizim ishga tushirilmoqda...")
+    # Referal tizimi
+    referred_by: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    referral_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    await init_db()
+    has_used_trial: Mapped[bool] = mapped_column(Boolean, default=False)
+    trial_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
-    dp = Dispatcher()
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    dp.include_router(admin.router)
-    dp.include_router(start.router)
-    dp.include_router(auth.router)
-    dp.include_router(user_settings.router)
-    dp.include_router(payment.router)
+    session: Mapped["UserbotSession"] = relationship("UserbotSession", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    subscriptions: Mapped[list["Subscription"]] = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
+    settings: Mapped["UserbotSettings"] = relationship("UserbotSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="user")
 
-    asyncio.create_task(client_manager.start_all_active_users())
 
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        check_expired_subscriptions,
-        trigger="interval",
-        seconds=60,
-        args=[bot]
-    )
-    scheduler.start()
-    logger.info("⏰ Obuna nazoratchisi (Scheduler) faollashtirildi.")
+class UserbotSession(Base):
+    __tablename__ = "userbot_sessions"
 
-    await start_web_server()
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    phone_number: Mapped[str] = mapped_column(String(32), nullable=True)
+    encrypted_session: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    connected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    try:
-        logger.info("🤖 Savdo boti xabarlarni qabul qilishga tayyor!")
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
-    finally:
-        logger.info("🛑 Tizim to'xtatilmoqda...")
-        await client_manager.stop_all()
-        await bot.session.close()
+    user: Mapped["User"] = relationship("User", back_populates="session")
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Tizim to'liq to'xtatildi.")
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    
+    plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.TRIAL)
+    status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus), default=SubscriptionStatus.ACTIVE)
+    
+    starts_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship("User", back_populates="subscriptions")
+
+
+class UserbotSettings(Base):
+    __tablename__ = "userbot_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+
+    auto_comment_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    comment_text: Mapped[str] = mapped_column(Text, default="Zo'r post! 👍")
+    comment_delay: Mapped[int] = mapped_column(Integer, default=5)
+    target_channels: Mapped[dict] = mapped_column(JSON, default=list)
+
+    save_destructing_media: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_stories_view: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    user: Mapped["User"] = relationship("User", back_populates="settings")
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="UZS")
+    plan: Mapped[PlanType] = mapped_column(Enum(PlanType), nullable=False)
+    
+    telegram_charge_id: Mapped[str] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship("User", back_populates="payments")
