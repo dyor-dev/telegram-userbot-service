@@ -29,7 +29,6 @@ class User(Base):
     
     agreed_terms: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Referal tizimi
     referred_by: Mapped[int] = mapped_column(BigInteger, nullable=True)
     referral_count: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -67,6 +66,10 @@ class Subscription(Base):
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.TRIAL)
     status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus), default=SubscriptionStatus.ACTIVE)
     
+    # 12 soat va 1 soat oldin ogohlantirish belgilari
+    warned_12h: Mapped[bool] = mapped_column(Boolean, default=False)
+    warned_1h: Mapped[bool] = mapped_column(Boolean, default=False)
+
     starts_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
