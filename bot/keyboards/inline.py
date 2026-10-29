@@ -1,5 +1,6 @@
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+import urllib.parse
 
 def main_menu_kb(has_session: bool, is_vip: bool) -> InlineKeyboardMarkup:
     """Asosiy menyu klaviaturasi."""
@@ -22,14 +23,28 @@ def main_menu_kb(has_session: bool, is_vip: bool) -> InlineKeyboardMarkup:
     builder.button(text="⚙️ Sozlamalar", callback_data="settings_menu")
     builder.button(text="📖 Buyruqlar qo'llanmasi", callback_data="commands_guide")
 
-    # 4-qator: Taklif va shikoyatlar
+    # 4-qator: Referal va Takliflar
+    builder.button(text="👥 Bepul VIP (Do'stlarni taklif qilish)", callback_data="referral_menu")
     builder.button(text="📩 Taklif va shikoyatlar", callback_data="feedback_menu")
 
-    builder.adjust(1, 1 if is_vip else 2, 2, 1)
+    builder.adjust(1, 1 if is_vip else 2, 2, 1, 1)
+    return builder.as_markup()
+
+def referral_kb(ref_link: str) -> InlineKeyboardMarkup:
+    """Do'stlarga ulashish klaviaturasi."""
+    builder = InlineKeyboardBuilder()
+    share_text = urllib.parse.quote(
+        "🚀 Zo'r Telegram Userbot xizmatini topdim! Chaqmoqdek tez avto-komment, maxfiy mediani (.ok) saqlash va boshqa qulayliklar bor. "
+        "Sinab ko'ring:"
+    )
+    share_url = f"https://t.me/share/url?url={ref_link}&text={share_text}"
+    
+    builder.button(text="📤 Do'stlarga ulashish", url=share_url)
+    builder.button(text="⬅️ Bosh menyu", callback_data="back_to_main")
+    builder.adjust(1, 1)
     return builder.as_markup()
 
 def feedback_kb() -> InlineKeyboardMarkup:
-    """Dasturchiga to'g'ridan-to'g'ri bog'lanish tugmasi."""
     builder = InlineKeyboardBuilder()
     builder.button(text="💬 Dasturchiga yozish (@zsrov)", url="https://t.me/zsrov")
     builder.button(text="⬅️ Bosh menyu", callback_data="back_to_main")
@@ -37,7 +52,6 @@ def feedback_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def subscription_plans_kb() -> InlineKeyboardMarkup:
-    """VIP obuna tariflari."""
     builder = InlineKeyboardBuilder()
     builder.button(text="⚡ 1 kunlik VIP — 5 000 so'm", callback_data="plan_pay_1")
     builder.button(text="⚡ 7 kunlik VIP — 15 000 so'm", callback_data="plan_pay_7")
@@ -47,7 +61,6 @@ def subscription_plans_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def payment_action_kb() -> InlineKeyboardMarkup:
-    """To'lov sahifasidagi tugmalar."""
     builder = InlineKeyboardBuilder()
     builder.button(text="📤 Chekni @zsrov ga yuborish", url="https://t.me/zsrov")
     builder.button(text="⬅️ Boshqa tarif tanlash", callback_data="buy_vip")
