@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from sqlalchemy import (
     BigInteger, String, Boolean, DateTime,
-    ForeignKey, Text, Integer, Enum, JSON
+    ForeignKey, Text, Integer, Enum, JSON, Time
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from core.database import Base
@@ -41,6 +41,7 @@ class User(Base):
     subscriptions: Mapped[list["Subscription"]] = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
     settings: Mapped["UserbotSettings"] = relationship("UserbotSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
     payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="user")
+    scheduled_messages: Mapped[list["ScheduledMessage"]] = relationship("ScheduledMessage", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserbotSession(Base):
@@ -66,7 +67,6 @@ class Subscription(Base):
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.TRIAL)
     status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus), default=SubscriptionStatus.ACTIVE)
     
-    # 12 soat va 1 soat oldin ogohlantirish belgilari
     warned_12h: Mapped[bool] = mapped_column(Boolean, default=False)
     warned_1h: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -92,6 +92,24 @@ class UserbotSettings(Base):
     auto_stories_view: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped["User"] = relationship("User", back_populates="settings")
+
+
+class ScheduledMessage(Base):
+    """Aniq vaqtda (bir soniya ham kechikmasdan) yuboriladigan xabarlar jadvali."""
+    __tablename__ = "scheduled_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    
+    target_chat: Mapped[str] = mapped_column(String(128), nullable=False)   # @kanal yoki chat_id
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)         # Yuboriladigan matn
+    send_time: Mapped[str] = mapped_column(String(8), nullable=False)       # "22:55:00" formatida (Toshkent vaqti)
+    is_daily: Mapped[bool] = mapped_column(Boolean, default=False)          # Har kuni takrorlanishi
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship("User", back_populates="scheduled_messages")
 
 
 class Payment(Base):
