@@ -19,7 +19,7 @@ from core.config import settings
 from core.database import engine, Base
 from database import models
 
-from bot.handlers import start, auth, settings as user_settings, payment, admin
+from bot.handlers import start, auth, settings as user_settings, payment, admin, schedule
 from userbot.client_manager import client_manager
 from userbot.tasks.scheduled_sender import scheduled_sender
 from scheduler.checker import check_expired_subscriptions
@@ -73,6 +73,7 @@ async def main():
     dp.include_router(start.router)
     dp.include_router(auth.router)
     dp.include_router(user_settings.router)
+    dp.include_router(schedule.router)
     dp.include_router(payment.router)
 
     asyncio.create_task(client_manager.start_all_active_users())
