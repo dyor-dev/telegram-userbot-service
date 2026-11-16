@@ -19,22 +19,24 @@ def main_menu_kb(has_session: bool, is_vip: bool) -> InlineKeyboardMarkup:
     else:
         builder.button(text="⭐ VIP Obunani uzaytirish", callback_data="buy_vip")
 
-    # 3-qator: Sozlamalar va Qo'llanma
-    builder.button(text="⚙️ Sozlamalar", callback_data="settings_menu")
-    builder.button(text="📖 Buyruqlar qo'llanmasi", callback_data="commands_guide")
+    # 3-qator: Avto-komment va Rejali xabarlar
+    builder.button(text="⚙️ Avto-komment", callback_data="settings_menu")
+    builder.button(text="⏰ Rejali xabarlar", callback_data="schedule_menu")
 
-    # 4-qator: Referal va Takliflar
-    builder.button(text="👥 Bepul VIP (Do'stlarni taklif qilish)", callback_data="referral_menu")
+    # 4-qator: Qo'llanma va Referal
+    builder.button(text="📖 Buyruqlar qo'llanmasi", callback_data="commands_guide")
+    builder.button(text="👥 Bepul VIP (Referal)", callback_data="referral_menu")
+
+    # 5-qator: Taklif va shikoyatlar
     builder.button(text="📩 Taklif va shikoyatlar", callback_data="feedback_menu")
 
-    builder.adjust(1, 1 if is_vip else 2, 2, 1, 1)
+    builder.adjust(1, 1 if is_vip else 2, 2, 2, 1)
     return builder.as_markup()
 
 def referral_kb(ref_link: str) -> InlineKeyboardMarkup:
-    """Do'stlarga ulashish klaviaturasi."""
     builder = InlineKeyboardBuilder()
     share_text = urllib.parse.quote(
-        "🚀 Zo'r Telegram Userbot xizmatini topdim! Chaqmoqdek tez avto-komment, maxfiy mediani (.ok) saqlash va boshqa qulayliklar bor. "
+        "🚀 Zo'r Telegram Userbot xizmatini topdim! Chaqmoqdek tez avto-komment, aniq vaqtli xabarlar va maxfiy mediani (.ok) saqlash bor. "
         "Sinab ko'ring:"
     )
     share_url = f"https://t.me/share/url?url={ref_link}&text={share_text}"
