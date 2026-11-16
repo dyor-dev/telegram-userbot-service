@@ -40,7 +40,7 @@ async def init_db():
             await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS warned_1h BOOLEAN DEFAULT FALSE;"))
         except Exception:
             pass
-    logger.info("✅ PostgreSQL jadvallari va Ogohlantirish ustunlari tayyorlandi!")
+    logger.info("✅ PostgreSQL jadvallari va Rejali xabarlar jadvali tayyorlandi!")
 
 async def health_check(request):
     return web.Response(text="Bot va Userbot tizimi 100% faol holatda!", status=200)
