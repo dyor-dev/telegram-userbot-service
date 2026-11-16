@@ -25,7 +25,7 @@ class ClientManager:
     def _attach_handlers(self, client: Client, user_id: int):
         try:
             from userbot.handlers.commands import register_commands
-            register_commands(client)
+            register_commands(client, user_id)
         except Exception as e:
             logger.warning(f"Buyruqlarni ulashda xatolik ({user_id}): {e}")
 
