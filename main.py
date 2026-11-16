@@ -21,6 +21,7 @@ from database import models
 
 from bot.handlers import start, auth, settings as user_settings, payment, admin
 from userbot.client_manager import client_manager
+from userbot.tasks.scheduled_sender import scheduled_sender
 from scheduler.checker import check_expired_subscriptions
 
 logging.basicConfig(
@@ -40,7 +41,7 @@ async def init_db():
             await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS warned_1h BOOLEAN DEFAULT FALSE;"))
         except Exception:
             pass
-    logger.info("✅ PostgreSQL jadvallari va Rejali xabarlar jadvali tayyorlandi!")
+    logger.info("✅ PostgreSQL jadvallari tayyorlandi!")
 
 async def health_check(request):
     return web.Response(text="Bot va Userbot tizimi 100% faol holatda!", status=200)
@@ -75,6 +76,7 @@ async def main():
     dp.include_router(payment.router)
 
     asyncio.create_task(client_manager.start_all_active_users())
+    asyncio.create_task(scheduled_sender.run_loop())
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
